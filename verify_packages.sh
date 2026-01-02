@@ -1,58 +1,10 @@
 #!/bin/bash
 
-# List of packages to verify
-packages=(
-  "base-devel"
-  "git"
-  "wget"
-  "curl"
-  "ca-certificates"
-  "gtk3"
-  "gnutls"
-  "ncurses"
-  "libxml2"
-  "libjpeg-turbo"
-  "libpng"
-  "libtiff"
-  "libwebp"
-  "gcc-libs"
-  "systemd-libs"
-  "sqlite"
-  "harfbuzz"
-  "libx11"
-  "libxcb"
-  "libxext"
-  "libxrender"
-  "libxfixes"
-  "libxi"
-  "libxinerama"
-  "libxrandr"
-  "libxcursor"
-  "libxcomposite"
-  "libxdamage"
-  "libxxf86vm"
-  "libxau"
-  "libxdmcp"
-  "pcre2"
-  "libffi"
-  "wayland"
-  "libxkbcommon"
-  "librsvg"
-  "gmp"
-  "mpfr"
-  "mpc"
-  "acl"
-  "attr"
-  "libselinux"
-  "dbus"
-  "gtk-layer-shell"
-  "libtool"
-  "texinfo"
-  "automake"
-  "autoconf"
-  "bison"
-  "flex"
-)
+# Source the main script to get the BUILD_DEPS array
+source build-emacs-appimage.sh
+
+# Use the BUILD_DEPS array from the main script
+packages=("${BUILD_DEPS[@]}")
 
 # Check if packages exist in Arch Linux
 for pkg in "${packages[@]}"; do

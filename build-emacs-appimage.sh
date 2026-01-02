@@ -8,7 +8,7 @@ set -euo pipefail
 
 # Display help message
 show_help() {
-    cat << EOF
+    cat <<EOF
 Usage: $0 [OPTIONS]
 
 Options:
@@ -27,58 +27,37 @@ EOF
 
 # Parse command line arguments
 ICON_URL=""
+APP_VERSION="29.4"
+OUTPUT="emacs-${APP_VERSION}-x86_64.AppImage"
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --icon|-i)
-            ICON_URL="$2"
-            shift 2
-            ;;
-        --version|-v)
-            APP_VERSION="$2"
-            shift 2
-            ;;
-        --output|-o)
-            OUTPUT="$2"
-            shift 2
-            ;;
-        --help|-h)
-            show_help
-            ;;
-        *)
-            echo "Unknown option: $1"
-            echo "Use --help for usage information"
-            exit 1
-            ;;
-    esac
-done
-
-# Parse command line arguments
-ICON_URL=""
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --icon|-i)
-            ICON_URL="$2"
-            shift 2
-            ;;
-        --version|-v)
-            APP_VERSION="$2"
-            shift 2
-            ;;
-        --output|-o)
-            OUTPUT="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown option: $1"
-            echo "Usage: $0 [--icon|-i ICON_URL] [--version|-v VERSION] [--output|-o OUTPUT]"
-            exit 1
-            ;;
+    --icon | -i)
+        ICON_URL="$2"
+        shift 2
+        ;;
+    --version | -v)
+        APP_VERSION="$2"
+        OUTPUT="emacs-${APP_VERSION}-x86_64.AppImage"
+        shift 2
+        ;;
+    --output | -o)
+        OUTPUT="$2"
+        shift 2
+        ;;
+    --help | -h)
+        show_help
+        ;;
+    *)
+        echo "Unknown option: $1"
+        echo "Use --help for usage information"
+        exit 1
+        ;;
     esac
 done
 
 # Configuration
 APP_NAME="Emacs"
-APP_VERSION="${APP_VERSION:-29.4}"  # Update as needed
+APP_VERSION="${APP_VERSION:-30.2}" # Update as needed
 APP_DIR="AppDir"
 APPDIR="${APP_DIR}"
 OUTPUT="${OUTPUT:-emacs-${APP_VERSION}-x86_64.AppImage}"
@@ -106,60 +85,58 @@ EMACS_CONFIGURE_OPTS=(
 
 # System dependencies required for building
 BUILD_DEPS=(
-    build-essential
+    base-devel
     git
     wget
     curl
     ca-certificates
-    libgtk-3-dev
-    libgnutls28-dev
-    libncurses-dev
-    libxml2-dev
-    libjpeg-dev
-    libpng-dev
-    libtiff-dev
-    libgif-dev
-    librsvg2-dev
-    libwebp-dev
-    libgccjit-13-dev
-    libsystemd-dev
-    libsqlite3-dev
-    libharfbuzz-dev
-    libxwidgets-dev
-    libxinput-dev
-    libxkbfile-dev
-    libxmu-dev
-    libxt-dev
-    libxpm-dev
-    libxaw7-dev
-    libxft-dev
-    libxrender-dev
-    libxext-dev
-    libx11-dev
-    libxcb-dev
-    libxdmcp-dev
-    libxau-dev
-    pkg-config
-    texinfo
+    gtk3
+    gnutls
+    ncurses
+    libxml2
+    libjpeg-turbo
+    libpng
+    libtiff
+    libwebp
+    gcc-libs
+    systemd-libs
+    sqlite
+    harfbuzz
+    libx11
+    libxcb
+    libxext
+    libxrender
+    libxfixes
+    libxi
+    libxinerama
+    libxrandr
+    libxcursor
+    libxcomposite
+    libxdamage
+    libxxf86vm
+    libxau
+    libxdmcp
+    pcre2
+    libffi
+    wayland
+    libxkbcommon
+    librsvg
+    gmp
+    mpfr
+    mpc
+    acl
+    attr
+    libselinux
+    dbus
+    gtk-layer-shell
     libtool
+    texinfo
     automake
     autoconf
     bison
     flex
-    libgmp-dev
-    libmpfr-dev
-    libmpc-dev
-    libacl1-dev
-    libattr1-dev
-    libselinux1-dev
-    libgmp-dev
-    libdbus-1-dev
-    libgtk-3-dev
-    libgtk-layer-shell-dev
-    libgtk-layer-shell3-dev
-    libgtk-3-bin
-    libgtk-3-common
-    libgtk-3-0
+    libgccjit
+    webkit2gtk
 )
 
 # AppImage tools
@@ -173,19 +150,34 @@ install_dependencies() {
     echo "Installing system dependencies..."
 
     # Detect package manager
-    if command -v apt-get &> /dev/null; then
+    if command -v apt-get &>/dev/null; then
         echo "Using apt-get package manager..."
-        sudo apt-get update || { echo "Failed to update apt packages"; exit 1; }
-        sudo apt-get install -y "${BUILD_DEPS[@]}" || { echo "Failed to install dependencies"; exit 1; }
-    elif command -v dnf &> /dev/null; then
+        sudo apt-get update || {
+            echo "Failed to update apt packages"
+            exit 1
+        }
+        sudo apt-get install -y "${BUILD_DEPS[@]}" || {
+            echo "Failed to install dependencies"
+            exit 1
+        }
+    elif command -v dnf &>/dev/null; then
         echo "Using dnf package manager..."
-        sudo dnf install -y "${BUILD_DEPS[@]}" || { echo "Failed to install dependencies"; exit 1; }
-    elif command -v yum &> /dev/null; then
+        sudo dnf install -y "${BUILD_DEPS[@]}" || {
+            echo "Failed to install dependencies"
+            exit 1
+        }
+    elif command -v yum &>/dev/null; then
         echo "Using yum package manager..."
-        sudo yum install -y "${BUILD_DEPS[@]}" || { echo "Failed to install dependencies"; exit 1; }
-    elif command -v pacman &> /dev/null; then
+        sudo yum install -y "${BUILD_DEPS[@]}" || {
+            echo "Failed to install dependencies"
+            exit 1
+        }
+    elif command -v pacman &>/dev/null; then
         echo "Using pacman package manager..."
-        sudo pacman -Syu --noconfirm "${BUILD_DEPS[@]}" || { echo "Failed to install dependencies"; exit 1; }
+        sudo pacman -Syu --noconfirm "${BUILD_DEPS[@]}" || {
+            echo "Failed to install dependencies"
+            exit 1
+        }
     else
         echo "Unsupported package manager. Please install dependencies manually."
         echo "Required dependencies: ${BUILD_DEPS[*]}"
@@ -204,8 +196,14 @@ install_appimage_tools() {
             echo "Failed to download linuxdeploy"
             exit 1
         fi
-        chmod +x linuxdeploy-x86_64.AppImage || { echo "Failed to make linuxdeploy executable"; exit 1; }
-        mv linuxdeploy-x86_64.AppImage linuxdeploy || { echo "Failed to rename linuxdeploy"; exit 1; }
+        chmod +x linuxdeploy-x86_64.AppImage || {
+            echo "Failed to make linuxdeploy executable"
+            exit 1
+        }
+        mv linuxdeploy-x86_64.AppImage linuxdeploy || {
+            echo "Failed to rename linuxdeploy"
+            exit 1
+        }
     fi
 
     # Install appimagetool
@@ -215,8 +213,14 @@ install_appimage_tools() {
             echo "Failed to download appimagetool"
             exit 1
         fi
-        chmod +x appimagetool-x86_64.AppImage || { echo "Failed to make appimagetool executable"; exit 1; }
-        mv appimagetool-x86_64.AppImage appimagetool || { echo "Failed to rename appimagetool"; exit 1; }
+        chmod +x appimagetool-x86_64.AppImage || {
+            echo "Failed to make appimagetool executable"
+            exit 1
+        }
+        mv appimagetool-x86_64.AppImage appimagetool || {
+            echo "Failed to rename appimagetool"
+            exit 1
+        }
     fi
 }
 
@@ -242,7 +246,10 @@ download_emacs() {
 build_emacs() {
     echo "Configuring and building Emacs..."
 
-    cd "emacs-${APP_VERSION}" || { echo "Failed to enter Emacs source directory"; exit 1; }
+    cd "emacs-${APP_VERSION}" || {
+        echo "Failed to enter Emacs source directory"
+        exit 1
+    }
 
     # Configure Emacs
     if ! ./configure "${EMACS_CONFIGURE_OPTS[@]}"; then
@@ -256,7 +263,7 @@ build_emacs() {
         echo "Failed to bootstrap Emacs"
         exit 1
     fi
-    
+
     if ! make -j"$(nproc)"; then
         echo "Failed to build Emacs"
         exit 1
@@ -271,14 +278,17 @@ build_emacs() {
     # Remove emacsclient to disable client-server functionality
     rm -f "${APPDIR}/usr/bin/emacsclient" || echo "Warning: Failed to remove emacsclient"
 
-    cd .. || { echo "Failed to return to parent directory"; exit 1; }
+    cd .. || {
+        echo "Failed to return to parent directory"
+        exit 1
+    }
 }
 
 # Function to create AppRun script
 create_apprun() {
     echo "Creating AppRun script..."
 
-    cat > "${APPDIR}/AppRun" << 'EOF'
+    cat >"${APPDIR}/AppRun" <<'EOF'
 #!/bin/bash
 
 # Debug logging
@@ -376,9 +386,9 @@ bundle_libraries() {
     )
 
     # Copy system libraries if needed
-    if [[ -d /usr/lib/x86_64-linux-gnu ]]; then
+    if [[ -d /usr/lib ]]; then
         for lib in "${LIBRARIES[@]}"; do
-            cp /usr/lib/x86_64-linux-gnu/"${lib}" "${APPDIR}/usr/lib/" 2>/dev/null || true
+            cp /usr/lib/"${lib}" "${APPDIR}/usr/lib/" 2>/dev/null || true
         done
     fi
 }
@@ -387,28 +397,28 @@ bundle_libraries() {
 download_icon() {
     if [[ -n "${ICON_URL}" ]]; then
         echo "Downloading custom icon from ${ICON_URL}..."
-        
+
         # Extract filename from URL
         ICON_FILENAME=$(basename "${ICON_URL}")
-        
+
         # Download icon
         if ! wget -q "${ICON_URL}" -O "${APPDIR}/${ICON_FILENAME}"; then
             echo "Failed to download icon from ${ICON_URL}"
             return 1
         fi
-        
+
         # Convert icon to PNG format if needed
         if [[ "${ICON_FILENAME}" == *.icns ]]; then
             echo "Converting .icns to .png..."
             # Use ImageMagick to convert (install with: sudo apt-get install imagemagick)
-            if command -v convert &> /dev/null; then
+            if command -v convert &>/dev/null; then
                 convert "${APPDIR}/${ICON_FILENAME}" "${APPDIR}/emacs.png"
                 ICON_FILENAME="emacs.png"
             else
                 echo "Warning: ImageMagick not found, using original .icns file"
             fi
         fi
-        
+
         # Set icon name for desktop entry
         ICON_NAME="${ICON_FILENAME%.*}"
     else
@@ -421,7 +431,7 @@ download_icon() {
 create_desktop_entry() {
     echo "Creating desktop entry..."
 
-    cat > "${APPDIR}/emacs.desktop" << EOF
+    cat >"${APPDIR}/emacs.desktop" <<EOF
 [Desktop Entry]
 Name=Emacs
 Exec=AppRun
@@ -449,7 +459,7 @@ create_appimage() {
         echo "No AppImage file found after linuxdeploy"
         exit 1
     fi
-    
+
     if ! mv "${APPIMAGE_OUTPUT}" "${OUTPUT}"; then
         echo "Failed to rename AppImage file"
         exit 1
