@@ -9,8 +9,8 @@
 #  ✓ FUSE-Safe Build Process (Extracts tools to run without FUSE)             #
 #  ✓ CPU-native optimizations (-O3 -march=native)                             #
 #  ✓ Symlink Dispatcher (supports emacsclient symlinks)                       #
-#  ✓ Fixed Icon handling (Auto-resizes large icons)                           #
-#  ✓ Fixed AppRun Copy Error (Source != Destination)                          #
+#  ✓ Deep Icon Patching + Unique AppID (Fixes Dock & System Conflict)         #
+#  ✓ GearLever/Launcher Support (StartupWMClass + Permissions Fix)            #
 #  ✓ GTK Excluded (Uses host system theme/fonts)                              #
 #                                                                              #
 ################################################################################
@@ -21,6 +21,9 @@ APP_VERSION="30.2"
 OUTPUT="emacs-${APP_VERSION}-x86_64.AppImage"
 ICON_URL=""
 APPDIR="$(pwd)/AppDir"
+# Capture user ID for permission fix at the end
+USER_UID=$(id -u)
+USER_GID=$(id -g)
 
 show_help() {
     cat <<EOF
@@ -201,11 +204,7 @@ fi
 echo ""
 
 ################################################################################
-# STEP 6 & 7: Skipped (LinuxDeploy handles libs)
-################################################################################
-
-################################################################################
-# STEP 8: Create AppRun (Source File)
+# STEP 8: Create AppRun (Source File with UNIQUE NAME FIX)
 ################################################################################
 
 echo "Step 8: Creating AppRun"
@@ -273,14 +272,16 @@ if [[ "${1:-}" == "emacsclient" ]] || [[ "${1:-}" == "ctags" ]] || [[ "${1:-}" =
 fi
 
 # ---------------------------------------------------------
-# 3. Launch
+# 3. Launch with UNIQUE APP ID
 # ---------------------------------------------------------
 if [[ "$TARGET_BIN" == "emacs" ]]; then
     DUMP_FILE="${ARCH_LIBEXEC}/emacs.pdmp"
     if [[ -f "$DUMP_FILE" ]]; then
-        exec "${ARCH_BIN}/emacs" --dump-file="$DUMP_FILE" "${ARGS[@]}"
+        # FIX: We use --name "emacs-appimage" to force a unique Window ID.
+        # This allows the Dock to distinguish this AppImage from System Emacs.
+        exec "${ARCH_BIN}/emacs" --name "emacs-appimage" --dump-file="$DUMP_FILE" "${ARGS[@]}"
     else
-        exec "${ARCH_BIN}/emacs" "${ARGS[@]}"
+        exec "${ARCH_BIN}/emacs" --name "emacs-appimage" "${ARGS[@]}"
     fi
 else
     exec "${ARCH_BIN}/${TARGET_BIN}" "${ARGS[@]}"
@@ -288,96 +289,90 @@ fi
 APPRUN_EOF
 
 chmod +x "AppRun.source"
-echo "✓ AppRun source created"
+echo "✓ AppRun source created (Includes --name override)"
 echo ""
 
 ################################################################################
-# STEP 9: Icon Setup (FIXED)
+# STEP 9: Icon Setup (Unique Name)
 ################################################################################
 
 echo "Step 9: Setting up icon"
 echo "─────────────────────────────────────────────────────────────────────"
 
 ICON_FOUND=0
-SRC_DIR="emacs-${APP_VERSION}"
+# FIX: Use unique icon name to prevent system theme collision
+ICON_NAME="emacs-appimage.png"
 
-# 1. Try Custom Icon URL
+# 1. Download Custom Icon
 if [[ -n "${ICON_URL}" ]]; then
-    echo "  Downloading custom icon from ${ICON_URL}..."
-    if wget -q -O "${APPDIR}/emacs.png" "${ICON_URL}"; then
+    echo "  Downloading custom icon..."
+    if wget -q -O "${APPDIR}/${ICON_NAME}" "${ICON_URL}"; then
         if [[ "${ICON_URL}" == *.icns ]] && command -v magick &>/dev/null; then
-            magick "${APPDIR}/emacs.png" "${APPDIR}/emacs-temp.png" 2>/dev/null
-            mv "${APPDIR}/emacs-temp.png" "${APPDIR}/emacs.png"
+            magick "${APPDIR}/${ICON_NAME}" "${APPDIR}/emacs-temp.png" 2>/dev/null
+            mv "${APPDIR}/emacs-temp.png" "${APPDIR}/${ICON_NAME}"
         fi
-        echo "✓ Custom icon downloaded"
         ICON_FOUND=1
-    else
-        echo "⚠ Custom icon download failed"
     fi
 fi
 
-# 2. Try Source Tree Icons (Best Quality First)
+# 2. Fallback to Source
 if [[ $ICON_FOUND -eq 0 ]]; then
+    # Try to find a good source icon
     declare -a ICON_PATHS=(
-        "${SRC_DIR}/etc/images/icons/hicolor/128x128/apps/emacs.png"
-        "${SRC_DIR}/etc/images/icons/hicolor/scalable/apps/emacs.svg"
-        "${SRC_DIR}/etc/images/icons/hicolor/48x48/apps/emacs.png"
-        "${SRC_DIR}/etc/images/emacs.png"
+        "emacs-${APP_VERSION}/etc/images/icons/hicolor/128x128/apps/emacs.png"
+        "emacs-${APP_VERSION}/etc/images/emacs.png"
     )
     for path in "${ICON_PATHS[@]}"; do
         if [[ -f "$path" ]]; then
-            cp "$path" "${APPDIR}/emacs.png"
-            echo "✓ Found source icon: $path"
+            cp "$path" "${APPDIR}/${ICON_NAME}"
             ICON_FOUND=1
             break
         fi
     done
 fi
 
-# 3. Try Installed Icons
+# 3. SVG Fallback
 if [[ $ICON_FOUND -eq 0 ]]; then
-    declare -a INSTALLED_PATHS=(
-        "${APPDIR}/usr/share/icons/hicolor/128x128/apps/emacs.png"
-        "${APPDIR}/usr/share/icons/hicolor/scalable/apps/emacs.svg"
-        "${APPDIR}/usr/share/icons/hicolor/48x48/apps/emacs.png"
-        "${APPDIR}/usr/share/emacs/${APP_VERSION}/etc/images/emacs.png"
-    )
-    for path in "${INSTALLED_PATHS[@]}"; do
-        if [[ -f "$path" ]]; then
-            cp "$path" "${APPDIR}/emacs.png"
-            echo "✓ Found installed icon: $path"
-            ICON_FOUND=1
-            break
-        fi
-    done
-fi
-
-# 4. Fallback (The "Black Icon" Prevention)
-if [[ $ICON_FOUND -eq 0 ]]; then
-    echo "⚠ No icon found! Creating a temporary SVG..."
-    cat >"${APPDIR}/emacs.svg" <<EOF
+    echo "⚠ No icon found! Creating fallback..."
+    cat >"${APPDIR}/emacs-appimage.svg" <<EOF
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <rect width="256" height="256" fill="#7f5ab6" rx="40" ry="40"/>
   <text x="128" y="168" font-size="140" text-anchor="middle" fill="white" font-family="sans-serif" font-weight="bold">E</text>
 </svg>
 EOF
-    mv "${APPDIR}/emacs.svg" "${APPDIR}/emacs.png"
-    echo "✓ Created fallback SVG icon"
-fi
-
-# 5. SANITIZATION: Resize if too big (Fixes "invalid x resolution: 1024" error)
-if [[ -f "${APPDIR}/emacs.png" ]]; then
+    # Convert to png for safety or use as is. LinuxDeploy prefers png usually.
+    # We'll just stick to the SVG if ImageMagick fails, but name it png for logic simplicity if needed,
+    # or better, just rename it to .png if it is SVG.
+    # Actually, let's keep it simple:
     if command -v magick &>/dev/null; then
-        echo "  Ensuring icon is valid size (max 512x512)..."
-        # The '>' flag means "only shrink if larger than this"
-        magick "${APPDIR}/emacs.png" -resize "512x512>" "${APPDIR}/emacs.png"
-        echo "✓ Icon resolution validated"
-    elif command -v convert &>/dev/null; then
-        echo "  Ensuring icon is valid size (max 512x512)..."
-        convert "${APPDIR}/emacs.png" -resize "512x512>" "${APPDIR}/emacs.png"
-        echo "✓ Icon resolution validated"
+        magick "${APPDIR}/emacs-appimage.svg" "${APPDIR}/${ICON_NAME}"
+    else
+        mv "${APPDIR}/emacs-appimage.svg" "${APPDIR}/${ICON_NAME}"
     fi
 fi
+
+# 4. Resize
+if [[ -f "${APPDIR}/${ICON_NAME}" ]] && command -v magick &>/dev/null; then
+    magick "${APPDIR}/${ICON_NAME}" -resize "512x512>" "${APPDIR}/${ICON_NAME}"
+fi
+
+# 5. Overwrite Internal Icons (The "Nuclear Option")
+echo "  Overwriting internal icons..."
+TARGET_ICON_DIR="${APPDIR}/usr/share/icons/hicolor"
+for size in 16x16 24x24 32x32 48x48 64x64 128x128 256x256 512x512; do
+    mkdir -p "${TARGET_ICON_DIR}/${size}/apps"
+    cp "${APPDIR}/${ICON_NAME}" "${TARGET_ICON_DIR}/${size}/apps/emacs.png"
+    # Also copy as unique name
+    cp "${APPDIR}/${ICON_NAME}" "${TARGET_ICON_DIR}/${size}/apps/emacs-appimage.png"
+done
+
+# Overwrite Emacs internal resource icon
+INTERNAL_IMG_DIR="${APPDIR}/usr/share/emacs/${APP_VERSION}/etc/images"
+mkdir -p "${INTERNAL_IMG_DIR}"
+cp "${APPDIR}/${ICON_NAME}" "${INTERNAL_IMG_DIR}/emacs.png"
+cp "${APPDIR}/${ICON_NAME}" "${INTERNAL_IMG_DIR}/emacs-appimage.png"
+
+echo "✓ Icon setup complete (${ICON_NAME})"
 echo ""
 
 ################################################################################
@@ -387,6 +382,8 @@ echo ""
 echo "Step 10: Creating desktop entry"
 echo "─────────────────────────────────────────────────────────────────────"
 
+# FIX: Icon=emacs-appimage (Unique ID)
+# FIX: StartupWMClass=emacs-appimage (Matches the --name flag in AppRun)
 cat >"${APPDIR}/emacs.desktop" <<EOF
 [Desktop Entry]
 Version=1.0
@@ -394,14 +391,15 @@ Type=Application
 Name=Emacs
 Comment=GNU Emacs text editor and IDE
 Exec=emacs %F
-Icon=emacs
+Icon=emacs-appimage
+StartupWMClass=emacs-appimage
 StartupNotify=true
 Terminal=false
 Categories=Development;TextEditor;
 MimeType=text/plain;text/x-c;text/x-java;text/x-lisp;text/x-python;text/x-latex;text/x-shellscript;
 Keywords=text;editor;development;
 EOF
-echo "✓ Desktop entry created"
+echo "✓ Desktop entry created (Unique ID: emacs-appimage)"
 echo ""
 
 ################################################################################
@@ -410,10 +408,8 @@ echo ""
 
 echo "Step 11: Preparing AppDir"
 echo "─────────────────────────────────────────────────────────────────────"
-if [[ ! -f "${APPDIR}/emacs.desktop" ]] || [[ ! -f "${APPDIR}/emacs.png" ]]; then
-    cp "${APPDIR}/emacs.desktop" "${APPDIR}/" 2>/dev/null || true
-    cp "${APPDIR}/emacs.png" "${APPDIR}/" 2>/dev/null || true
-fi
+cp "${APPDIR}/emacs.desktop" "${APPDIR}/" 2>/dev/null || true
+cp "${APPDIR}/emacs-appimage.png" "${APPDIR}/" 2>/dev/null || true
 echo "✓ AppDir ready for deployment"
 echo ""
 
@@ -458,13 +454,12 @@ echo "────────────────────────�
 export VERSION="${APP_VERSION}"
 export NO_STRIP=1
 
-# FIX: EXCLUDE GTK to prevent "schema not found" crashes on host systems
-# FIX: Use "AppRun.source" to avoid copy errors
+# FIX: Pass unique icon filename to linuxdeploy
 "$(pwd)/linuxdeploy-build/AppRun" \
     --appdir "${APPDIR}" \
     --executable "${APPDIR}/usr/bin/emacs" \
     --desktop-file "${APPDIR}/emacs.desktop" \
-    --icon-file "${APPDIR}/emacs.png" \
+    --icon-file "${APPDIR}/emacs-appimage.png" \
     --custom-apprun "AppRun.source" \
     --exclude-library libgtk-3.so.0 \
     --exclude-library libgdk-3.so.0 \
@@ -481,13 +476,17 @@ GENERATED_NAME="Emacs-${APP_VERSION}-x86_64.AppImage"
 
 if [[ -f "${GENERATED_NAME}" ]]; then
     mv "${GENERATED_NAME}" "${OUTPUT}"
-    chmod +x "${OUTPUT}"
+    # FIX: GearLever Permission Error
+    # Ensure the output file is owned by the user who started the script (not root/docker)
+    chown "${USER_UID}:${USER_GID}" "${OUTPUT}" 2>/dev/null || true
+    chmod 755 "${OUTPUT}"
     echo "✓ AppImage created: ${OUTPUT}"
 else
     FOUND=$(find . -maxdepth 1 -name "*.AppImage" | head -n 1)
     if [[ -n "$FOUND" ]]; then
         mv "$FOUND" "${OUTPUT}"
-        chmod +x "${OUTPUT}"
+        chown "${USER_UID}:${USER_GID}" "${OUTPUT}" 2>/dev/null || true
+        chmod 755 "${OUTPUT}"
         echo "✓ AppImage created: ${OUTPUT}"
     else
         echo "❌ LinuxDeploy failed to create output file"
