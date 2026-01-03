@@ -12,6 +12,7 @@
 #  ✓ Deep Icon Patching + Unique AppID (Fixes Dock & System Conflict)         #
 #  ✓ GearLever/Launcher Support (StartupWMClass + Permissions Fix)            #
 #  ✓ GTK Excluded (Uses host system theme/fonts)                              #
+#  ✓ NO SUDO Required (Proper permission handling from start)                 #
 #                                                                              #
 ################################################################################
 
@@ -21,9 +22,9 @@ APP_VERSION="30.2"
 OUTPUT="emacs-${APP_VERSION}-x86_64.AppImage"
 ICON_URL=""
 APPDIR="$(pwd)/AppDir"
-# Capture user ID for permission fix at the end
-USER_UID=$(id -u)
-USER_GID=$(id -g)
+# These will be set by command line args from Docker wrapper
+TARGET_UID=$(id -u)
+TARGET_GID=$(id -g)
 
 show_help() {
     cat <<EOF
@@ -33,6 +34,8 @@ Options:
   --icon, -i ICON_URL          Download custom icon from URL
   --version, -v VERSION        Emacs version (default: 30.2)
   --output, -o OUTPUT          Output filename
+  --uid UID                    Target user ID for file ownership
+  --gid GID                    Target group ID for file ownership
   --help, -h                   Show this help
 EOF
     exit 0
@@ -53,6 +56,14 @@ while [[ $# -gt 0 ]]; do
             OUTPUT="$2"
             shift 2
             ;;
+        --uid)
+            TARGET_UID="$2"
+            shift 2
+            ;;
+        --gid)
+            TARGET_GID="$2"
+            shift 2
+            ;;
         --help | -h) show_help ;;
         *)
             echo "ERROR: Unknown option: $1"
@@ -61,13 +72,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo "═════════════════════════════════════════════════════════════════════════"
+echo "═══════════════════════════════════════════════════════════════════════"
 echo "  EMACS APPIMAGE - ARCH LINUX UNIVERSAL VERSION"
-echo "═════════════════════════════════════════════════════════════════════════"
+echo "═══════════════════════════════════════════════════════════════════════"
 echo "Configuration:"
 echo "  Version:        ${APP_VERSION}"
 echo "  Output:         ${OUTPUT}"
 echo "  Custom Icon:    ${ICON_URL:-None}"
+echo "  Target User:    ${TARGET_UID}:${TARGET_GID}"
 echo ""
 
 # Arch Linux dependencies
@@ -104,7 +116,7 @@ EMACS_CONFIGURE_OPTS=(
 ################################################################################
 
 echo "Step 1: Installing Dependencies"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "───────────────────────────────────────────────────────────────────────"
 
 sudo pacman -Syu --noconfirm
 sudo pacman -S --noconfirm "${BUILD_DEPS[@]}"
@@ -117,7 +129,7 @@ echo ""
 ################################################################################
 
 echo "Step 2: Ensuring FUSE availability"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "───────────────────────────────────────────────────────────────────────"
 if [[ -f /usr/lib/libfuse.so.3 ]] || [[ -f /usr/lib64/libfuse.so.3 ]]; then
     echo "  Found: FUSE 3"
 elif [[ -f /usr/lib/libfuse.so.2 ]] || [[ -f /usr/lib64/libfuse.so.2 ]]; then
@@ -133,7 +145,7 @@ echo ""
 ################################################################################
 
 echo "Step 3: Downloading Emacs ${APP_VERSION}"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "───────────────────────────────────────────────────────────────────────"
 
 if [[ ! -d "emacs-${APP_VERSION}" ]]; then
     wget -c "https://ftp.gnu.org/gnu/emacs/emacs-${APP_VERSION}.tar.xz" 2>/dev/null ||
@@ -150,7 +162,7 @@ echo ""
 ################################################################################
 
 echo "Step 4: Building Emacs (30-45 minutes)"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "───────────────────────────────────────────────────────────────────────"
 
 mkdir -p "${APPDIR}/usr/bin" "${APPDIR}/usr/lib" "${APPDIR}/usr/share"
 
@@ -189,7 +201,7 @@ echo ""
 ################################################################################
 
 echo "Step 5: Setting up arch-dependent directory"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "───────────────────────────────────────────────────────────────────────"
 
 ARCH_DIR="${APPDIR}/usr/libexec/emacs/${APP_VERSION}/x86_64-pc-linux-gnu"
 mkdir -p "$ARCH_DIR"
@@ -208,7 +220,7 @@ echo ""
 ################################################################################
 
 echo "Step 8: Creating AppRun"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "───────────────────────────────────────────────────────────────────────"
 
 # FIX: We create "AppRun.source" in the build dir, NOT inside APPDIR.
 cat >"AppRun.source" <<EOF
@@ -293,31 +305,51 @@ echo "✓ AppRun source created (Includes --name override)"
 echo ""
 
 ################################################################################
-# STEP 9: Icon Setup (Unique Name)
+# STEP 9: Icon Setup (AGGRESSIVE OVERRIDE)
 ################################################################################
 
-echo "Step 9: Setting up icon"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "Step 9: Setting up icon (AGGRESSIVE MODE)"
+echo "───────────────────────────────────────────────────────────────────────"
 
 ICON_FOUND=0
-# FIX: Use unique icon name to prevent system theme collision
 ICON_NAME="emacs-appimage.png"
+TEMP_ICON="$(pwd)/custom_icon_download.tmp"
 
-# 1. Download Custom Icon
+# 1. Download Custom Icon with AGGRESSIVE verification
 if [[ -n "${ICON_URL}" ]]; then
-    echo "  Downloading custom icon..."
-    if wget -q -O "${APPDIR}/${ICON_NAME}" "${ICON_URL}"; then
-        if [[ "${ICON_URL}" == *.icns ]] && command -v magick &>/dev/null; then
-            magick "${APPDIR}/${ICON_NAME}" "${APPDIR}/emacs-temp.png" 2>/dev/null
-            mv "${APPDIR}/emacs-temp.png" "${APPDIR}/${ICON_NAME}"
+    echo "  Downloading custom icon from: ${ICON_URL}"
+    if wget -q -O "${TEMP_ICON}" "${ICON_URL}"; then
+        # Verify it's actually an image
+        if file "${TEMP_ICON}" | grep -qi "image"; then
+            echo "  ✓ Downloaded and verified image"
+
+            # Convert if needed
+            if [[ "${ICON_URL}" == *.icns ]] && command -v magick &>/dev/null; then
+                magick "${TEMP_ICON}" "${APPDIR}/${ICON_NAME}" 2>/dev/null
+                rm "${TEMP_ICON}"
+            else
+                # Force convert to PNG to normalize format
+                if command -v magick &>/dev/null; then
+                    magick "${TEMP_ICON}" -resize "512x512>" "${APPDIR}/${ICON_NAME}"
+                    rm "${TEMP_ICON}"
+                else
+                    mv "${TEMP_ICON}" "${APPDIR}/${ICON_NAME}"
+                fi
+            fi
+            ICON_FOUND=1
+            echo "  ✓ Custom icon processed: ${APPDIR}/${ICON_NAME}"
+        else
+            echo "  ✗ Downloaded file is not a valid image!"
+            rm "${TEMP_ICON}"
         fi
-        ICON_FOUND=1
+    else
+        echo "  ✗ Failed to download custom icon"
     fi
 fi
 
 # 2. Fallback to Source
 if [[ $ICON_FOUND -eq 0 ]]; then
-    # Try to find a good source icon
+    echo "  Using fallback Emacs icon from source..."
     declare -a ICON_PATHS=(
         "emacs-${APP_VERSION}/etc/images/icons/hicolor/128x128/apps/emacs.png"
         "emacs-${APP_VERSION}/etc/images/emacs.png"
@@ -333,46 +365,68 @@ fi
 
 # 3. SVG Fallback
 if [[ $ICON_FOUND -eq 0 ]]; then
-    echo "⚠ No icon found! Creating fallback..."
-    cat >"${APPDIR}/emacs-appimage.svg" <<EOF
+    echo "  ⚠ No icon found! Creating fallback..."
+    cat >"${APPDIR}/emacs-appimage.svg" <<'EOF'
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <rect width="256" height="256" fill="#7f5ab6" rx="40" ry="40"/>
   <text x="128" y="168" font-size="140" text-anchor="middle" fill="white" font-family="sans-serif" font-weight="bold">E</text>
 </svg>
 EOF
-    # Convert to png for safety or use as is. LinuxDeploy prefers png usually.
-    # We'll just stick to the SVG if ImageMagick fails, but name it png for logic simplicity if needed,
-    # or better, just rename it to .png if it is SVG.
-    # Actually, let's keep it simple:
     if command -v magick &>/dev/null; then
         magick "${APPDIR}/emacs-appimage.svg" "${APPDIR}/${ICON_NAME}"
+        rm "${APPDIR}/emacs-appimage.svg"
     else
         mv "${APPDIR}/emacs-appimage.svg" "${APPDIR}/${ICON_NAME}"
     fi
 fi
 
-# 4. Resize
-if [[ -f "${APPDIR}/${ICON_NAME}" ]] && command -v magick &>/dev/null; then
-    magick "${APPDIR}/${ICON_NAME}" -resize "512x512>" "${APPDIR}/${ICON_NAME}"
+# 4. THE NUCLEAR OPTION - Overwrite EVERYTHING
+echo "  NUCLEAR OPTION: Overwriting ALL internal icons..."
+
+# Verify we have an icon
+if [[ ! -f "${APPDIR}/${ICON_NAME}" ]]; then
+    echo "  ✗ CRITICAL: No icon file found at ${APPDIR}/${ICON_NAME}"
+    exit 1
 fi
 
-# 5. Overwrite Internal Icons (The "Nuclear Option")
-echo "  Overwriting internal icons..."
+echo "  Using icon: ${APPDIR}/${ICON_NAME}"
+file "${APPDIR}/${ICON_NAME}"
+
+# A. Overwrite hicolor icon theme (ALL sizes)
 TARGET_ICON_DIR="${APPDIR}/usr/share/icons/hicolor"
-for size in 16x16 24x24 32x32 48x48 64x64 128x128 256x256 512x512; do
+for size in 16x16 22x22 24x24 32x32 48x48 64x64 128x128 256x256 512x512 scalable; do
     mkdir -p "${TARGET_ICON_DIR}/${size}/apps"
-    cp "${APPDIR}/${ICON_NAME}" "${TARGET_ICON_DIR}/${size}/apps/emacs.png"
-    # Also copy as unique name
-    cp "${APPDIR}/${ICON_NAME}" "${TARGET_ICON_DIR}/${size}/apps/emacs-appimage.png"
+    if [[ "$size" == "scalable" ]]; then
+        # For scalable, we need SVG or just skip
+        continue
+    fi
+    # Resize appropriately
+    SIZE_NUM=$(echo "$size" | cut -d'x' -f1)
+    if command -v magick &>/dev/null; then
+        magick "${APPDIR}/${ICON_NAME}" -resize "${SIZE_NUM}x${SIZE_NUM}!" "${TARGET_ICON_DIR}/${size}/apps/emacs.png"
+        magick "${APPDIR}/${ICON_NAME}" -resize "${SIZE_NUM}x${SIZE_NUM}!" "${TARGET_ICON_DIR}/${size}/apps/emacs-appimage.png"
+    else
+        cp "${APPDIR}/${ICON_NAME}" "${TARGET_ICON_DIR}/${size}/apps/emacs.png"
+        cp "${APPDIR}/${ICON_NAME}" "${TARGET_ICON_DIR}/${size}/apps/emacs-appimage.png"
+    fi
 done
 
-# Overwrite Emacs internal resource icon
+# B. Overwrite Emacs internal resource icon
 INTERNAL_IMG_DIR="${APPDIR}/usr/share/emacs/${APP_VERSION}/etc/images"
 mkdir -p "${INTERNAL_IMG_DIR}"
+mkdir -p "${INTERNAL_IMG_DIR}/icons"
 cp "${APPDIR}/${ICON_NAME}" "${INTERNAL_IMG_DIR}/emacs.png"
-cp "${APPDIR}/${ICON_NAME}" "${INTERNAL_IMG_DIR}/emacs-appimage.png"
+cp "${APPDIR}/${ICON_NAME}" "${INTERNAL_IMG_DIR}/icons/emacs.png"
 
-echo "✓ Icon setup complete (${ICON_NAME})"
+# C. Put icon in pixmaps too
+mkdir -p "${APPDIR}/usr/share/pixmaps"
+cp "${APPDIR}/${ICON_NAME}" "${APPDIR}/usr/share/pixmaps/emacs.png"
+cp "${APPDIR}/${ICON_NAME}" "${APPDIR}/usr/share/pixmaps/emacs-appimage.png"
+
+# D. DELETE any conflicting icons
+find "${APPDIR}/usr/share" -type f \( -name "*emacs*.svg" -o -name "*emacs*.xpm" \) -delete 2>/dev/null || true
+
+echo "✓ Icon nuclear override complete (${ICON_NAME})"
 echo ""
 
 ################################################################################
@@ -380,10 +434,8 @@ echo ""
 ################################################################################
 
 echo "Step 10: Creating desktop entry"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "───────────────────────────────────────────────────────────────────────"
 
-# FIX: Icon=emacs-appimage (Unique ID)
-# FIX: StartupWMClass=emacs-appimage (Matches the --name flag in AppRun)
 cat >"${APPDIR}/emacs.desktop" <<EOF
 [Desktop Entry]
 Version=1.0
@@ -399,7 +451,7 @@ Categories=Development;TextEditor;
 MimeType=text/plain;text/x-c;text/x-java;text/x-lisp;text/x-python;text/x-latex;text/x-shellscript;
 Keywords=text;editor;development;
 EOF
-echo "✓ Desktop entry created (Unique ID: emacs-appimage)"
+echo "✓ Desktop entry created"
 echo ""
 
 ################################################################################
@@ -407,9 +459,9 @@ echo ""
 ################################################################################
 
 echo "Step 11: Preparing AppDir"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "───────────────────────────────────────────────────────────────────────"
 cp "${APPDIR}/emacs.desktop" "${APPDIR}/" 2>/dev/null || true
-cp "${APPDIR}/emacs-appimage.png" "${APPDIR}/" 2>/dev/null || true
+cp "${APPDIR}/${ICON_NAME}" "${APPDIR}/" 2>/dev/null || true
 echo "✓ AppDir ready for deployment"
 echo ""
 
@@ -418,7 +470,7 @@ echo ""
 ################################################################################
 
 echo "Step 12: Preparing Build Tools"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "───────────────────────────────────────────────────────────────────────"
 
 # 1. LinuxDeploy
 if [[ ! -d "linuxdeploy-build" ]]; then
@@ -449,17 +501,16 @@ echo ""
 ################################################################################
 
 echo "Step 13: Bundling and Creating AppImage"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "───────────────────────────────────────────────────────────────────────"
 
 export VERSION="${APP_VERSION}"
 export NO_STRIP=1
 
-# FIX: Pass unique icon filename to linuxdeploy
 "$(pwd)/linuxdeploy-build/AppRun" \
     --appdir "${APPDIR}" \
     --executable "${APPDIR}/usr/bin/emacs" \
     --desktop-file "${APPDIR}/emacs.desktop" \
-    --icon-file "${APPDIR}/emacs-appimage.png" \
+    --icon-file "${APPDIR}/${ICON_NAME}" \
     --custom-apprun "AppRun.source" \
     --exclude-library libgtk-3.so.0 \
     --exclude-library libgdk-3.so.0 \
@@ -476,23 +527,24 @@ GENERATED_NAME="Emacs-${APP_VERSION}-x86_64.AppImage"
 
 if [[ -f "${GENERATED_NAME}" ]]; then
     mv "${GENERATED_NAME}" "${OUTPUT}"
-    # FIX: GearLever Permission Error
-    # Ensure the output file is owned by the user who started the script (not root/docker)
-    chown "${USER_UID}:${USER_GID}" "${OUTPUT}" 2>/dev/null || true
-    chmod 755 "${OUTPUT}"
-    echo "✓ AppImage created: ${OUTPUT}"
+elif [[ -f "Emacs-x86_64.AppImage" ]]; then
+    mv "Emacs-x86_64.AppImage" "${OUTPUT}"
 else
     FOUND=$(find . -maxdepth 1 -name "*.AppImage" | head -n 1)
     if [[ -n "$FOUND" ]]; then
         mv "$FOUND" "${OUTPUT}"
-        chown "${USER_UID}:${USER_GID}" "${OUTPUT}" 2>/dev/null || true
-        chmod 755 "${OUTPUT}"
-        echo "✓ AppImage created: ${OUTPUT}"
     else
-        echo "❌ LinuxDeploy failed to create output file"
+        echo "✗ LinuxDeploy failed to create output file"
         exit 1
     fi
 fi
+
+# CRITICAL: Set proper permissions from the start
+chown "${TARGET_UID}:${TARGET_GID}" "${OUTPUT}" 2>/dev/null || true
+chmod 755 "${OUTPUT}"
+
+echo "✓ AppImage created: ${OUTPUT}"
+echo "  Permissions: $(stat -c '%a %U:%G' "${OUTPUT}" 2>/dev/null || stat -f '%p %Su:%Sg' "${OUTPUT}")"
 echo ""
 
 ################################################################################
@@ -500,7 +552,7 @@ echo ""
 ################################################################################
 
 echo "Step 14: Cleanup"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "───────────────────────────────────────────────────────────────────────"
 rm -rf "${APPDIR}" "emacs-${APP_VERSION}" "AppRun.source"
 echo "✓ Cleaned build files"
 echo ""
@@ -510,7 +562,7 @@ echo ""
 ################################################################################
 
 echo "Step 15: Testing"
-echo "─────────────────────────────────────────────────────────────────────"
+echo "───────────────────────────────────────────────────────────────────────"
 export APPIMAGE_EXTRACT_AND_RUN=1
 
 "./${OUTPUT}" --version 2>&1 | head -2
@@ -523,8 +575,8 @@ else
 fi
 echo ""
 
-echo "═════════════════════════════════════════════════════════════════════════"
+echo "═══════════════════════════════════════════════════════════════════════"
 echo "✓✓✓ BUILD SUCCESSFUL ✓✓✓"
-echo "═════════════════════════════════════════════════════════════════════════"
+echo "═══════════════════════════════════════════════════════════════════════"
 echo "AppImage:  ${OUTPUT}"
 echo ""
