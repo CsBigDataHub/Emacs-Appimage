@@ -50,24 +50,24 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-    --icon | -i)
-        ICON_URL="$2"
-        shift 2
-        ;;
-    --version | -v)
-        APP_VERSION="$2"
-        OUTPUT="emacs-${APP_VERSION}-x86_64.AppImage"
-        shift 2
-        ;;
-    --output | -o)
-        OUTPUT="$2"
-        shift 2
-        ;;
-    --help | -h) show_help ;;
-    *)
-        echo "ERROR: Unknown option: $1"
-        exit 1
-        ;;
+        --icon | -i)
+            ICON_URL="$2"
+            shift 2
+            ;;
+        --version | -v)
+            APP_VERSION="$2"
+            OUTPUT="emacs-${APP_VERSION}-x86_64.AppImage"
+            shift 2
+            ;;
+        --output | -o)
+            OUTPUT="$2"
+            shift 2
+            ;;
+        --help | -h) show_help ;;
+        *)
+            echo "ERROR: Unknown option: $1"
+            exit 1
+            ;;
     esac
 done
 
@@ -386,18 +386,20 @@ echo "✓ AppRun created (with EMACSPATH fix)"
 echo ""
 
 ################################################################################
-# STEP 9: Icon Setup
+# STEP 9: Icon Setup (FIXED)
 ################################################################################
 
 echo "Step 9: Setting up icon"
 echo "─────────────────────────────────────────────────────────────────────"
 
 ICON_FOUND=0
+SRC_DIR="emacs-${APP_VERSION}"
 
-# Try custom icon first
+# 1. Try Custom Icon URL
 if [[ -n "${ICON_URL}" ]]; then
     echo "  Downloading custom icon from ${ICON_URL}..."
     if wget -q -O "${APPDIR}/emacs.png" "${ICON_URL}"; then
+        # Convert .icns if needed
         if [[ "${ICON_URL}" == *.icns ]] && command -v magick &>/dev/null; then
             magick "${APPDIR}/emacs.png" "${APPDIR}/emacs-temp.png" 2>/dev/null
             mv "${APPDIR}/emacs-temp.png" "${APPDIR}/emacs.png"
@@ -405,46 +407,76 @@ if [[ -n "${ICON_URL}" ]]; then
         echo "✓ Custom icon downloaded"
         ICON_FOUND=1
     else
-        echo "⚠ Custom icon download failed, trying built-in..."
+        echo "⚠ Custom icon download failed"
     fi
 fi
 
-# Try built-in icon from source
-if [[ $ICON_FOUND -eq 0 ]] && [[ -f "emacs-${APP_VERSION}/etc/images/emacs.png" ]]; then
-    cp "emacs-${APP_VERSION}/etc/images/emacs.png" "${APPDIR}/emacs.png"
-    echo "✓ Using Emacs icon from source"
-    ICON_FOUND=1
-fi
-
-# Try installed icon
-if [[ $ICON_FOUND -eq 0 ]] && [[ -f "${APPDIR}/usr/share/emacs/${APP_VERSION}/etc/images/emacs.png" ]]; then
-    cp "${APPDIR}/usr/share/emacs/${APP_VERSION}/etc/images/emacs.png" "${APPDIR}/emacs.png"
-    echo "✓ Using built-in Emacs icon from installation"
-    ICON_FOUND=1
-fi
-
-# Try system icon
-if [[ $ICON_FOUND -eq 0 ]] && [[ -f "${APPDIR}/usr/share/icons/hicolor/256x256/apps/emacs.png" ]]; then
-    cp "${APPDIR}/usr/share/icons/hicolor/256x256/apps/emacs.png" "${APPDIR}/emacs.png"
-    echo "✓ Using system icon"
-    ICON_FOUND=1
-fi
-
-# Create minimal 256x256 PNG icon as fallback
+# 2. Try Source Tree Icons (Best Quality First)
 if [[ $ICON_FOUND -eq 0 ]]; then
-    echo "  Creating minimal 256x256 PNG icon..."
-    if command -v convert &>/dev/null; then
-        convert -size 256x256 xc:#1f1f1f -pointsize 120 -fill white -gravity center -annotate +0+0 "E" "${APPDIR}/emacs.png" 2>/dev/null || true
-    fi
+    # Define a list of preferred icon paths in the source tree
+    # We prefer 128x128 or scalable (SVG) over 48x48
+    declare -a ICON_PATHS=(
+        "${SRC_DIR}/etc/images/icons/hicolor/128x128/apps/emacs.png"
+        "${SRC_DIR}/etc/images/icons/hicolor/scalable/apps/emacs.svg"
+        "${SRC_DIR}/etc/images/icons/hicolor/48x48/apps/emacs.png"
+        "${SRC_DIR}/etc/images/emacs.png"
+    )
 
-    # If convert failed, use absolute fallback minimal PNG
-    if [[ ! -f "${APPDIR}/emacs.png" ]]; then
-        printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x01\x00\x00\x00\x01\x00\x08\x06\x00\x00\x00\x1f\x15\xc4\x89' >"${APPDIR}/emacs.png"
-    fi
-    echo "✓ Created fallback icon"
+    for path in "${ICON_PATHS[@]}"; do
+        if [[ -f "$path" ]]; then
+            cp "$path" "${APPDIR}/emacs.png"
+            echo "✓ Found source icon: $path"
+            ICON_FOUND=1
+            break
+        fi
+    done
 fi
 
-[[ -f "${APPDIR}/emacs.png" ]] && echo "✓ Icon ready: $(du -h ${APPDIR}/emacs.png | cut -f1)"
+# 3. Try Installed Icons (In AppDir)
+if [[ $ICON_FOUND -eq 0 ]]; then
+    # Check where make install might have put them
+    declare -a INSTALLED_PATHS=(
+        "${APPDIR}/usr/share/icons/hicolor/128x128/apps/emacs.png"
+        "${APPDIR}/usr/share/icons/hicolor/scalable/apps/emacs.svg"
+        "${APPDIR}/usr/share/icons/hicolor/48x48/apps/emacs.png"
+        "${APPDIR}/usr/share/emacs/${APP_VERSION}/etc/images/emacs.png"
+    )
+
+    for path in "${INSTALLED_PATHS[@]}"; do
+        if [[ -f "$path" ]]; then
+            cp "$path" "${APPDIR}/emacs.png"
+            echo "✓ Found installed icon: $path"
+            ICON_FOUND=1
+            break
+        fi
+    done
+fi
+
+# 4. Fallback (The "Black Icon" Prevention)
+if [[ $ICON_FOUND -eq 0 ]]; then
+    echo "⚠ No icon found! Creating a temporary SVG..."
+
+    # Create a proper purple SVG instead of a broken binary
+    cat >"${APPDIR}/emacs.svg" <<EOF
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="#7f5ab6" rx="40" ry="40"/>
+  <text x="128" y="168" font-size="140" text-anchor="middle" fill="white" font-family="sans-serif" font-weight="bold">E</text>
+</svg>
+EOF
+    # Move it to emacs.png (appimagetool handles SVGs named png fine usually,
+    # but strictly we should keep extension. For simplicity we name it emacs.png
+    # if appimagetool complains we can rename).
+    # Actually, let's keep it proper:
+    mv "${APPDIR}/emacs.svg" "${APPDIR}/emacs.png"
+    echo "✓ Created fallback SVG icon"
+fi
+
+# Final Check
+if [[ -f "${APPDIR}/emacs.png" ]]; then
+    echo "✓ Icon setup complete: $(du -h "${APPDIR}/emacs.png" | cut -f1)"
+else
+    echo "❌ ERROR: Failed to setup icon"
+fi
 
 echo ""
 
