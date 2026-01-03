@@ -9,8 +9,9 @@
 #  ✓ FUSE-Safe Build Process (Extracts tools to run without FUSE)             #
 #  ✓ CPU-native optimizations (-O3 -march=native)                             #
 #  ✓ Symlink Dispatcher (supports emacsclient symlinks)                       #
-#  ✓ Fixed Icon handling (No black icons)                                     #
+#  ✓ Fixed Icon handling (Auto-resizes large icons)                           #
 #  ✓ Fixed AppRun Copy Error (Source != Destination)                          #
+#  ✓ GTK Excluded (Uses host system theme/fonts)                              #
 #                                                                              #
 ################################################################################
 
@@ -202,7 +203,6 @@ echo ""
 ################################################################################
 # STEP 6 & 7: Skipped (LinuxDeploy handles libs)
 ################################################################################
-# We skip manual bundling because LinuxDeploy will handle it automatically.
 
 ################################################################################
 # STEP 8: Create AppRun (Source File)
@@ -212,8 +212,6 @@ echo "Step 8: Creating AppRun"
 echo "─────────────────────────────────────────────────────────────────────"
 
 # FIX: We create "AppRun.source" in the build dir, NOT inside APPDIR.
-# This prevents the "cannot copy file to itself" error in Step 13.
-
 cat >"AppRun.source" <<EOF
 #!/bin/bash
 
@@ -366,6 +364,20 @@ EOF
     mv "${APPDIR}/emacs.svg" "${APPDIR}/emacs.png"
     echo "✓ Created fallback SVG icon"
 fi
+
+# 5. SANITIZATION: Resize if too big (Fixes "invalid x resolution: 1024" error)
+if [[ -f "${APPDIR}/emacs.png" ]]; then
+    if command -v magick &>/dev/null; then
+        echo "  Ensuring icon is valid size (max 512x512)..."
+        # The '>' flag means "only shrink if larger than this"
+        magick "${APPDIR}/emacs.png" -resize "512x512>" "${APPDIR}/emacs.png"
+        echo "✓ Icon resolution validated"
+    elif command -v convert &>/dev/null; then
+        echo "  Ensuring icon is valid size (max 512x512)..."
+        convert "${APPDIR}/emacs.png" -resize "512x512>" "${APPDIR}/emacs.png"
+        echo "✓ Icon resolution validated"
+    fi
+fi
 echo ""
 
 ################################################################################
@@ -399,7 +411,6 @@ echo ""
 echo "Step 11: Preparing AppDir"
 echo "─────────────────────────────────────────────────────────────────────"
 if [[ ! -f "${APPDIR}/emacs.desktop" ]] || [[ ! -f "${APPDIR}/emacs.png" ]]; then
-    # We copy them just in case they aren't at root
     cp "${APPDIR}/emacs.desktop" "${APPDIR}/" 2>/dev/null || true
     cp "${APPDIR}/emacs.png" "${APPDIR}/" 2>/dev/null || true
 fi
@@ -418,8 +429,6 @@ if [[ ! -d "linuxdeploy-build" ]]; then
     echo "  Downloading linuxdeploy..."
     wget -q -O linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
     chmod +x linuxdeploy
-
-    # EXTRACT it to avoid FUSE requirement during build
     ./linuxdeploy --appimage-extract >/dev/null
     mv squashfs-root linuxdeploy-build
     rm linuxdeploy
@@ -430,16 +439,12 @@ if [[ ! -d "appimagetool-build" ]]; then
     echo "  Downloading appimagetool..."
     wget -q -O appimagetool "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
     chmod +x appimagetool
-
-    # EXTRACT it too
     ./appimagetool --appimage-extract >/dev/null
     mv squashfs-root appimagetool-build
     rm appimagetool
 fi
 
-# Add tools to PATH so linuxdeploy can find appimagetool
 export PATH="$(pwd)/linuxdeploy-build/usr/bin:$(pwd)/appimagetool-build/usr/bin:${PATH}"
-
 echo "✓ Tools extracted and ready"
 echo ""
 
@@ -453,11 +458,8 @@ echo "────────────────────────�
 export VERSION="${APP_VERSION}"
 export NO_STRIP=1
 
-# We EXCLUDE the core GTK/GLib stack.
-# Why? Because linuxdeploy bundles the libraries but misses the schemas/resources,
-# causing the "Gtk-CRITICAL" crashes. By excluding them, we force the AppImage
-# to use the HOST system's GTK, which is correctly configured.
-
+# FIX: EXCLUDE GTK to prevent "schema not found" crashes on host systems
+# FIX: Use "AppRun.source" to avoid copy errors
 "$(pwd)/linuxdeploy-build/AppRun" \
     --appdir "${APPDIR}" \
     --executable "${APPDIR}/usr/bin/emacs" \
@@ -475,7 +477,6 @@ export NO_STRIP=1
     --exclude-library libcairo-gobject.so.2 \
     --output appimage
 
-# Rename Output
 GENERATED_NAME="Emacs-${APP_VERSION}-x86_64.AppImage"
 
 if [[ -f "${GENERATED_NAME}" ]]; then
@@ -483,7 +484,6 @@ if [[ -f "${GENERATED_NAME}" ]]; then
     chmod +x "${OUTPUT}"
     echo "✓ AppImage created: ${OUTPUT}"
 else
-    # Fallback search
     FOUND=$(find . -maxdepth 1 -name "*.AppImage" | head -n 1)
     if [[ -n "$FOUND" ]]; then
         mv "$FOUND" "${OUTPUT}"
@@ -503,7 +503,6 @@ echo ""
 echo "Step 14: Cleanup"
 echo "─────────────────────────────────────────────────────────────────────"
 rm -rf "${APPDIR}" "emacs-${APP_VERSION}" "AppRun.source"
-# NOTE: We keep linuxdeploy-build/appimagetool-build folders to speed up re-runs.
 echo "✓ Cleaned build files"
 echo ""
 
