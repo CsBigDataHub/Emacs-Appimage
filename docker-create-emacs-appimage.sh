@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Wrapper script for building Emacs AppImage in Docker
+# Fixes FUSE issues and simplifies dependency management
 
 set -euo pipefail
 
@@ -39,93 +40,53 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Build the container command with all required dependencies
-CONTAINER_CMD=(
-    "pacman -Syu --noconfirm \
-      base-devel \
-      git \
-      wget \
-      curl \
-      ca-certificates \
-      gtk3 \
-      gnutls \
-      ncurses \
-      libxml2 \
-      libjpeg-turbo \
-      libpng \
-      libtiff \
-      libwebp \
-      gcc-libs \
-      systemd-libs \
-      sqlite \
-      harfbuzz \
-      libx11 \
-      libxcb \
-      libxext \
-      libxrender \
-      libxfixes \
-      libxi \
-      libxinerama \
-      libxrandr \
-      libxcursor \
-      libxcomposite \
-      libxdamage \
-      libxxf86vm \
-      libxau \
-      libxdmcp \
-      pcre2 \
-      libffi \
-      wayland \
-      libxkbcommon \
-      librsvg \
-      gmp \
-      mpfr \
-      mpc \
-      acl \
-      attr \
-      dbus \
-      gtk-layer-shell \
-      libtool \
-      texinfo \
-      automake \
-      autoconf \
-      bison \
-      flex \
-      libgccjit \
-      webkit2gtk \
-      webkit2gtk-4.1 \
-      tree-sitter \
-      appstream-glib \
-      appstream \
-      imagemagick \
-      && chmod +x build-emacs-appimage.sh \
-      && ./build-emacs-appimage.sh"
-)
-
-# Add arguments if specified
+# Prepare arguments to pass to the inner build script
+INNER_ARGS=""
 if [[ -n "${ICON_URL}" ]]; then
-    CONTAINER_CMD+=("--icon" "${ICON_URL}")
+    INNER_ARGS="${INNER_ARGS} --icon \"${ICON_URL}\""
 fi
 if [[ "${APP_VERSION}" != "30.2" ]]; then
-    CONTAINER_CMD+=("--version" "${APP_VERSION}")
+    INNER_ARGS="${INNER_ARGS} --version \"${APP_VERSION}\""
 fi
+# Only pass output if it differs from default to let inner script handle logic
 if [[ "${OUTPUT}" != "emacs-${APP_VERSION}-x86_64.AppImage" ]]; then
-    CONTAINER_CMD+=("--output" "${OUTPUT}")
+    INNER_ARGS="${INNER_ARGS} --output \"${OUTPUT}\""
 fi
 
-# Join the container command with && and quotes
-CONTAINER_CMD_STR=$(printf "%s && " "${CONTAINER_CMD[@]}")
-CONTAINER_CMD_STR="${CONTAINER_CMD_STR% && }"
+# Build the command string to run inside the container.
+# 1. Install ONLY the bootstrap tools (sudo, wget, base-devel).
+#    The inner script (Step 1) will handle the specific library dependencies.
+# 2. Make the build script executable.
+# 3. Run the build script with the forwarded arguments.
+CMD_STRING="pacman -Syu --noconfirm base-devel sudo wget && \
+chmod +x build-emacs-appimage.sh && \
+./build-emacs-appimage.sh ${INNER_ARGS}"
+
+echo "Starting Docker build container..."
+echo "  Version: ${APP_VERSION}"
+echo "  Output:  ${OUTPUT}"
+if [[ -n "${ICON_URL}" ]]; then echo "  Icon:    Custom"; fi
 
 # Execute the Docker command
+# --device /dev/fuse: REQUIRED for AppImage to mount itself
+# --cap-add SYS_ADMIN: REQUIRED for FUSE mounting privileges
+# --security-opt apparmor:unconfined: Prevents issues on Ubuntu hosts
 docker run -it --rm \
+    --device /dev/fuse \
+    --cap-add SYS_ADMIN \
+    --security-opt apparmor:unconfined \
     -v "${SCRIPT_DIR}:${BUILD_DIR}" \
     -w "${BUILD_DIR}" \
     archlinux \
-    /bin/bash -c "${CONTAINER_CMD_STR}"
+    /bin/bash -c "${CMD_STRING}"
 
-# Copy the output file to the current directory if it was created
-if [[ -f "${BUILD_DIR}/${OUTPUT}" ]]; then
-    cp "${BUILD_DIR}/${OUTPUT}" "${OUTPUT_DIR}/"
-    echo "AppImage copied to: ${OUTPUT_DIR}/${OUTPUT}"
+# Check if the build produced an output
+if [[ -f "${SCRIPT_DIR}/${OUTPUT}" ]]; then
+    echo "----------------------------------------------------------------"
+    echo "Build successful!"
+    echo "AppImage available at: ${SCRIPT_DIR}/${OUTPUT}"
+    echo "----------------------------------------------------------------"
+else
+    echo "Error: Output file not found. Build may have failed."
+    exit 1
 fi
