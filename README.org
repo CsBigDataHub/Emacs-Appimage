@@ -1,133 +1,94 @@
-# Emacs AppImage Builder
+#+TITLE: Emacs AppImage Builder (Arch Linux Universal)
+#+AUTHOR: Emacs AppImage Builder
+#+OPTIONS: toc:nil num:nil
 
-This project provides a script to build a portable Emacs AppImage for Linux.
+* Overview
+This project provides a robust, automated build system to create a portable *GNU Emacs AppImage* using an Arch Linux base.
 
-## Features
+It uses *LinuxDeploy* to bundle dependencies while specifically excluding system-dependent GUI toolkits (GTK) to ensure seamless integration with host themes, fonts, and input methods.
 
-- Builds Emacs with xwidgets support
-- Creates a portable, self-contained AppImage
-- Supports custom icons
-- Configurable Emacs version
+** Key Features
+- *Version:* Builds Emacs 30.2 (configurable).
+- *Performance:* Compiled with =-O3 -march=native=, Native Compilation (AOT), and pure GTK3 (PGTK).
+- *Modern Features:* Includes Tree-sitter, JSON, SVG, and Xwidgets (Webkit).
+- *Native Look & Feel:* Uses the host system's GTK theme and fonts (fixes common AppImage UI ugliness).
+- *Smart Dispatcher:* Acts as =emacs= or =emacsclient= depending on how it is invoked.
+- *FUSE-Safe Building:* Build process runs entirely in userspace (extracts tools) to avoid Docker FUSE issues.
 
-## Requirements
+* Requirements
+- *Docker* (Recommended method)
+- *OR* An Arch Linux system with =base-devel= installed.
 
-- Linux system (tested on Arch Linux, Ubuntu, Fedora)
-- Docker (for sandboxed builds)
-- Internet connection for downloading dependencies
-
-## Usage
-
-### Building Locally
-
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/yourusername/emacs-app-image-builder.git
-   cd emacs-app-image-builder
-   ```
-
-2. Run the build script:
-   ```bash
-   ./build-emacs-appimage.sh
-   ```
-
-3. Optional arguments:
-   - `--icon, -i`: Specify a custom icon URL
-   - `--version, -v`: Specify Emacs version (default: 29.4)
-   - `--output, -o`: Specify output filename
-
-### Building with Docker (Recommended)
-
-Use the following Docker command to build in a sandboxed Arch Linux environment:
+* Building (The Easy Way)
+The recommended way to build is using the provided Docker wrapper. This handles all dependencies and FUSE permissions automatically.
 
 #+begin_src sh
-  sudo docker run -it --rm \
-    -v $(pwd):/build \
-    -w /build \
-    archlinux \
-    /bin/bash -c "
-      pacman -Syu --noconfirm \
-        base-devel \
-        git \
-        wget \
-        curl \
-        ca-certificates \
-        gtk3 \
-        gnutls \
-        ncurses \
-        libxml2 \
-        libjpeg-turbo \
-        libpng \
-        libtiff \
-        libwebp \
-        gcc-libs \
-        systemd-libs \
-        sqlite \
-        harfbuzz \
-        libx11 \
-        libxcb \
-        libxext \
-        libxrender \
-        libxfixes \
-        libxi \
-        libxinerama \
-        libxrandr \
-        libxcursor \
-        libxcomposite \
-        libxdamage \
-        libxxf86vm \
-        libxau \
-        libxdmcp \
-        pcre2 \
-        libffi \
-        wayland \
-        libxkbcommon \
-        librsvg \
-        gmp \
-        mpfr \
-        mpc \
-        acl \
-        attr \
-        dbus \
-        gtk-layer-shell \
-        libtool \
-        texinfo \
-        automake \
-        autoconf \
-        bison \
-        flex \
-        libgccjit \
-        webkit2gtk \
-        imagemagick \
-        && \
-      chmod +x build-emacs-appimage.sh \
-      && \
-      ./build-emacs-appimage.sh
-    "
+  # 1. Make scripts executable
+  chmod +x docker-create-emacs-appimage.sh build-emacs-appimage.sh
+
+  # 2. Run the builder
+  ./docker-create-emacs-appimage.sh
 #+end_src
 
-```
+** Build Options
+You can pass arguments to the Docker wrapper:
 
-## Build Process
+#+begin_src sh
+  # Build a specific version with a custom icon
+  ./docker-create-emacs-appimage.sh \
+      --version 31.0.50 \
+      --icon "https://raw.githubusercontent.com/d12frosted/homebrew-emacs-plus/master/icons/modern-icon.png" \
+      --output "Emacs-Next.AppImage"
+#+end_src
 
-1. **Install Dependencies**: The script installs all required system dependencies.
-2. **Download Emacs Source**: Downloads the specified Emacs version from GNU mirrors.
-3. **Configure Emacs**: Configures Emacs with xwidgets, pgtk, and other features.
-4. **Build Emacs**: Compiles Emacs with native compilation and tree-sitter support.
-5. **Bundle Libraries**: Bundles all required libraries into the AppDir.
-6. **Create AppImage**: Uses linuxdeploy to create the final AppImage.
+* Usage
+** Running Emacs
+Simply execute the AppImage:
+#+begin_src sh
+  ./emacs-30.2-x86_64.AppImage
+#+end_src
 
-## Notes
+** Running Emacs Client
+The AppImage contains a smart dispatcher. You can use ~emacsclient~ features in two ways:
 
-- The build process may take a long time (1-2 hours) depending on your system.
-- The resulting AppImage is approximately 200-300MB in size.
-- The script automatically updates the WEBKIT_BROKEN version to 2.51.92 in configure.ac.
+*** Method 1: Symlink (Recommended)
+Create a symlink named ~emacsclient~ pointing to the AppImage. The AppImage detects its name and switches mode automatically.
 
-## Troubleshooting
+#+begin_src sh
+  # Create the link
+  ln -s ./emacs-30.2-x86_64.AppImage emacsclient
 
-- If the build fails, check the error messages and ensure all dependencies are installed.
-- For Docker builds, ensure you have sufficient disk space and permissions.
-- If you encounter network issues, try running the build script again.
+  # Run it (connects to the socket)
+  ./emacsclient -c -a ""
+#+end_src
 
-## License
+*** Method 2: Direct Argument
+Pass the command as the first argument to the AppImage.
 
-This project is licensed under the GNU GPLv3 License.
+#+begin_src sh
+  ./emacs-30.2-x86_64.AppImage emacsclient -c -a ""
+#+end_src
+
+* Technical Details
+** How the Build Works
+1. *Bootstrap:* Installs build dependencies (gcc, make, gtk3, webkit2gtk, etc.) via Pacman.
+2. *Compilation:* Compiles Emacs from source with ~--with-native-compilation=aot~ and ~--with-pgtk~.
+3. *Preparation:* Moves the ~emacs.pdmp~ (portable dumper) file to the correct architecture-specific directory.
+4. *Bundling:*
+   - Uses *LinuxDeploy* to crawl the binary and bundle required shared libraries (libpng, librsvg, libxml2, etc.).
+   - *Excludes* GTK/GDK/GLib libraries via ~--exclude-library~. This strategy avoids the "Frankenstein" library issue where bundled GTK libs cannot find host system schemas, ensuring native UI integration.
+5. *AppRun:* Injects a custom ~AppRun~ script that sets up environment variables (~EMACSLOADPATH~, ~EMACSDATA~) and handles the ~emacsclient~ dispatching.
+
+** Troubleshooting
+- *FUSE Errors:* If running on a system without FUSE, you can run the AppImage by extracting it:
+  #+begin_src sh
+    ./emacs-30.2-x86_64.AppImage --appimage-extract
+    ./squashfs-root/AppRun
+  #+end_src
+- *Black Icon:* If the icon appears black/blank, the build script automatically generates a fallback SVG. Ensure your desktop environment supports SVG icons.
+
+* Credits & Inspiration
+This project builds upon the hard work of the community. Special thanks to:
+
+- [[https://github.com/blahgeek/emacs-appimage/][blahgeek/emacs-appimage]]: For the inspiration on Docker-based Arch build workflows.
+- [[https://github.com/probonopd/Emacs.AppImage][probonopd/Emacs.AppImage]]: For pioneering the Emacs AppImage concepts and tooling.
