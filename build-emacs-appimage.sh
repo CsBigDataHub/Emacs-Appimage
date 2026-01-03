@@ -307,82 +307,97 @@ fi
 echo ""
 
 ################################################################################
-# STEP 8: Create AppRun (FIXED with EMACSPATH)
+# STEP 8: Create AppRun (Dispatcher Mode - Symlink Ready)
 ################################################################################
 
 echo "Step 8: Creating AppRun"
 echo "─────────────────────────────────────────────────────────────────────"
 
-cat >"${APPDIR}/AppRun" <<'APPRUN_EOF'
+# PART 1: Inject the version number
+cat >"${APPDIR}/AppRun" <<EOF
 #!/bin/bash
+
+# Injected by build script
+EMACS_VER="${APP_VERSION}"
+EOF
+
+# PART 2: The Logic
+cat >>"${APPDIR}/AppRun" <<'APPRUN_EOF'
 
 HERE="$(dirname "$(readlink -f "${0}")")"
 
-# 1. Define variables for cleanliness
-ARCH_LIBEXEC="${HERE}/usr/libexec/emacs/30.2/x86_64-pc-linux-gnu"
-ARCH_BIN="${HERE}/usr/bin"
-
-# 2. Core paths
-export PATH="${ARCH_BIN}:${PATH}"
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib64:${LD_LIBRARY_PATH}"
-
-# 3. Emacs Resource Paths
-export EMACS_BASE="${HERE}/usr/share/emacs"
-export EMACSDIR="${HERE}/usr/share/emacs"
-export EMACSDATA="${HERE}/usr/share/emacs/30.2/etc"
-export EMACSDOC="${HERE}/usr/share/emacs/30.2/etc"
-
-# 4. FIX: "arch-dependent data dir" warning
-# Emacs uses EMACSPATH to populate `exec-path`. We must include the libexec dir here.
-export EMACSPATH="${ARCH_LIBEXEC}:${ARCH_BIN}"
-
-# 5. Load paths
-export EMACSLOADPATH="\
-${HERE}/usr/share/emacs/30.2/lisp:\
-${HERE}/usr/share/emacs/30.2/lisp/emacs-lisp:\
-${HERE}/usr/share/emacs/30.2/lisp/progmodes:\
-${HERE}/usr/share/emacs/30.2/lisp/language:\
-${HERE}/usr/share/emacs/30.2/lisp/international:\
-${HERE}/usr/share/emacs/30.2/lisp/textmodes:\
-${HERE}/usr/share/emacs/30.2/lisp/vc:\
-${HERE}/usr/share/emacs/30.2/lisp/net:\
-${HERE}/usr/share/emacs/site-lisp"
-
-# 6. FIX: "Failed to load module appmenu-gtk-module"
-# This disables the Ubuntu global menu proxy, which isn't bundled.
+# ---------------------------------------------------------
+# 1. Setup Environment
+# ---------------------------------------------------------
 unset GTK_MODULES
 export GTK_MODULES=""
 export UBUNTU_MENUPROXY=0
 export NO_AT_BRIDGE=1
 
-# 7. Font configuration
+# Use the EMACS_VER variable we defined at the top
+ARCH_LIBEXEC="${HERE}/usr/libexec/emacs/${EMACS_VER}/x86_64-pc-linux-gnu"
+ARCH_BIN="${HERE}/usr/bin"
+
+export PATH="${ARCH_BIN}:${PATH}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib64:${LD_LIBRARY_PATH}"
+export EMACSPATH="${ARCH_LIBEXEC}:${ARCH_BIN}"
+
+export EMACS_BASE="${HERE}/usr/share/emacs"
+export EMACSDIR="${HERE}/usr/share/emacs"
+export EMACSDATA="${HERE}/usr/share/emacs/${EMACS_VER}/etc"
+export EMACSDOC="${HERE}/usr/share/emacs/${EMACS_VER}/etc"
+export EMACSLOADPATH="\
+${HERE}/usr/share/emacs/${EMACS_VER}/lisp:\
+${HERE}/usr/share/emacs/${EMACS_VER}/lisp/emacs-lisp:\
+${HERE}/usr/share/emacs/${EMACS_VER}/lisp/progmodes:\
+${HERE}/usr/share/emacs/${EMACS_VER}/lisp/language:\
+${HERE}/usr/share/emacs/${EMACS_VER}/lisp/international:\
+${HERE}/usr/share/emacs/${EMACS_VER}/lisp/textmodes:\
+${HERE}/usr/share/emacs/${EMACS_VER}/lisp/vc:\
+${HERE}/usr/share/emacs/${EMACS_VER}/lisp/net:\
+${HERE}/usr/share/emacs/site-lisp"
+
 export FONTCONFIG_PATH="${HERE}/etc/fonts"
-
-# 8. GTK configuration
-for moddir in "${HERE}"/usr/lib*/gtk-*/modules; do
-  if [[ -d "$moddir" ]]; then
-    export GTK_PATH="${HERE}/usr/lib/gtk-3.0:${HERE}/usr/lib64/gtk-3.0"
-    break
-  fi
-done
-
-# 9. FUSE configuration
 export LIBFUSE_DISABLE_THREAD_SPAWNING=1
 
-# 10. Launch
-# We use the pdmp we found earlier (referenced in EMACSPATH logic)
-DUMP_FILE="${ARCH_LIBEXEC}/emacs.pdmp"
+# ---------------------------------------------------------
+# 2. Logic: Decide what to run (Emacs or Client?)
+# ---------------------------------------------------------
+BIN_NAME=$(basename "${ARGV0:-$0}")
+TARGET_BIN="emacs"
+ARGS=("$@")
 
-if [[ -f "$DUMP_FILE" ]]; then
-  exec "${ARCH_BIN}/emacs" --dump-file="$DUMP_FILE" "$@"
+# Check if called via symlink (e.g., ./emacsclient)
+if [[ "$BIN_NAME" == "emacsclient"* ]]; then
+    TARGET_BIN="emacsclient"
+fi
+
+# Check if first argument is a command (e.g., ./AppImage emacsclient)
+if [[ "${1:-}" == "emacsclient" ]] || [[ "${1:-}" == "ctags" ]] || [[ "${1:-}" == "etags" ]]; then
+    TARGET_BIN="$1"
+    # Remove the first argument since we consumed it
+    ARGS=("${@:2}")
+fi
+
+# ---------------------------------------------------------
+# 3. Launch
+# ---------------------------------------------------------
+if [[ "$TARGET_BIN" == "emacs" ]]; then
+    # Run Emacs (Main Editor)
+    DUMP_FILE="${ARCH_LIBEXEC}/emacs.pdmp"
+    if [[ -f "$DUMP_FILE" ]]; then
+        exec "${ARCH_BIN}/emacs" --dump-file="$DUMP_FILE" "${ARGS[@]}"
+    else
+        exec "${ARCH_BIN}/emacs" "${ARGS[@]}"
+    fi
 else
-  # Fallback if pdmp isn't where we expect, though build script ensures it is
-  exec "${ARCH_BIN}/emacs" "$@"
+    # Run Tool (emacsclient, ctags, etags)
+    exec "${ARCH_BIN}/${TARGET_BIN}" "${ARGS[@]}"
 fi
 APPRUN_EOF
 
 chmod +x "${APPDIR}/AppRun"
-echo "✓ AppRun created (with EMACSPATH fix)"
+echo "✓ AppRun created (Dispatcher enabled)"
 echo ""
 
 ################################################################################
