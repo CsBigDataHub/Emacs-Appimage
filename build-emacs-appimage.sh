@@ -4,13 +4,13 @@
 #                                                                              #
 #  EMACS APPIMAGE - ARCH LINUX UNIVERSAL FINAL VERSION                       #
 #                                                                              #
-#  Works on all Arch Linux systems:                                           #
-#  ✓ Automatic FUSE detection (FUSE 2 or FUSE 3)                              #
+#  Features:                                                                  #
+#  ✓ LinuxDeploy integration (Robust dependency bundling)                     #
+#  ✓ FUSE-Safe Build Process (Extracts tools to run without FUSE)             #
 #  ✓ CPU-native optimizations (-O3 -march=native)                             #
-#  ✓ arch-dependent directory FIXED (EMACSPATH)                               #
-#  ✓ GTK appmenu warnings suppressed                                          #
-#  ✓ pdmp file included                                                       #
-#  ✓ Icon handling FIXED                                                      #
+#  ✓ Symlink Dispatcher (supports emacsclient symlinks)                       #
+#  ✓ Fixed Icon handling (No black icons)                                     #
+#  ✓ Fixed AppRun Copy Error (Source != Destination)                          #
 #                                                                              #
 ################################################################################
 
@@ -22,28 +22,14 @@ ICON_URL=""
 APPDIR="$(pwd)/AppDir"
 
 show_help() {
-    cat <<'EOF'
-EMACS APPIMAGE BUILD SCRIPT - ARCH LINUX
+    cat <<EOF
+Usage: $0 [OPTIONS]
 
-Usage: ./build-emacs-appimage.sh [OPTIONS]
-
-OPTIONS:
+Options:
   --icon, -i ICON_URL          Download custom icon from URL
   --version, -v VERSION        Emacs version (default: 30.2)
   --output, -o OUTPUT          Output filename
   --help, -h                   Show this help
-
-EXAMPLES:
-  ./build-emacs-appimage.sh
-  ./build-emacs-appimage.sh --icon https://example.com/icon.png
-  ./build-emacs-appimage.sh --version 30.2 --output my-emacs.AppImage
-
-FEATURES:
-  ✓ Automatic FUSE detection (tries fuse2, then fuse3)
-  ✓ CPU-native optimizations (-O3 -march=native)
-  ✓ Works on all Arch Linux distros
-  ✓ Full feature support
-
 EOF
     exit 0
 }
@@ -74,7 +60,6 @@ done
 echo "═════════════════════════════════════════════════════════════════════════"
 echo "  EMACS APPIMAGE - ARCH LINUX UNIVERSAL VERSION"
 echo "═════════════════════════════════════════════════════════════════════════"
-echo ""
 echo "Configuration:"
 echo "  Version:        ${APP_VERSION}"
 echo "  Output:         ${OUTPUT}"
@@ -98,6 +83,7 @@ BUILD_DEPS=(
     tree-sitter fuse2 fuse3
     appstream-glib appstream imagemagick
     librsvg libseccomp json-c
+    file
 )
 
 EMACS_CONFIGURE_OPTS=(
@@ -123,27 +109,19 @@ echo "✓ Dependencies installed"
 echo ""
 
 ################################################################################
-# STEP 2: Ensure FUSE availability (try fuse2 first, then fuse3)
+# STEP 2: Ensure FUSE availability
 ################################################################################
 
 echo "Step 2: Ensuring FUSE availability"
 echo "─────────────────────────────────────────────────────────────────────"
-
-FUSE_VERSION="unknown"
-
-# Check what's installed
 if [[ -f /usr/lib/libfuse.so.3 ]] || [[ -f /usr/lib64/libfuse.so.3 ]]; then
-    FUSE_VERSION="3"
     echo "  Found: FUSE 3"
 elif [[ -f /usr/lib/libfuse.so.2 ]] || [[ -f /usr/lib64/libfuse.so.2 ]]; then
-    FUSE_VERSION="2"
     echo "  Found: FUSE 2"
 else
     echo "  FUSE installed from deps"
-    FUSE_VERSION="auto"
 fi
-
-echo "✓ FUSE check complete (${FUSE_VERSION})"
+echo "✓ FUSE check complete"
 echo ""
 
 ################################################################################
@@ -219,110 +197,31 @@ if [[ -f "emacs-${APP_VERSION}/src/emacs.pdmp" ]]; then
 else
     echo "⚠ emacs.pdmp not found in source"
 fi
-
-# Verify
-if [[ -d "${APPDIR}/usr/libexec/emacs" ]]; then
-    echo "✓ Found libexec directory:"
-    find "${APPDIR}/usr/libexec/emacs" -type f -name "*.pdmp" 2>/dev/null | head -3
-fi
-
 echo ""
 
 ################################################################################
-# STEP 6: Bundle FUSE library (auto-detect version)
+# STEP 6 & 7: Skipped (LinuxDeploy handles libs)
 ################################################################################
-
-echo "Step 6: Bundling FUSE library (${FUSE_VERSION})"
-echo "─────────────────────────────────────────────────────────────────────"
-
-FUSE_FOUND=0
-
-# Try FUSE 3 first
-for FUSE_LIB in /usr/lib/libfuse.so.3 /usr/lib64/libfuse.so.3 /lib/libfuse.so.3; do
-    if [[ -f "$FUSE_LIB" ]]; then
-        mkdir -p "${APPDIR}/usr/lib"
-        cp "$FUSE_LIB" "${APPDIR}/usr/lib/"
-        echo "✓ Bundled FUSE 3 from $FUSE_LIB"
-        FUSE_FOUND=1
-
-        # Also bundle libfuse.so.3.x.x if it exists
-        FUSE_REAL=$(readlink -f "$FUSE_LIB")
-        if [[ "$FUSE_REAL" != "$FUSE_LIB" ]]; then
-            cp "$FUSE_REAL" "${APPDIR}/usr/lib/" 2>/dev/null || true
-        fi
-        break
-    fi
-done
-
-# Try FUSE 2 if FUSE 3 not found
-if [[ $FUSE_FOUND -eq 0 ]]; then
-    for FUSE_LIB in /usr/lib/libfuse.so.2 /usr/lib64/libfuse.so.2 /lib/libfuse.so.2; do
-        if [[ -f "$FUSE_LIB" ]]; then
-            mkdir -p "${APPDIR}/usr/lib"
-            cp "$FUSE_LIB" "${APPDIR}/usr/lib/"
-            echo "✓ Bundled FUSE 2 from $FUSE_LIB"
-            FUSE_FOUND=1
-
-            # Also bundle libfuse.so.2.x.x if it exists
-            FUSE_REAL=$(readlink -f "$FUSE_LIB")
-            if [[ "$FUSE_REAL" != "$FUSE_LIB" ]]; then
-                cp "$FUSE_REAL" "${APPDIR}/usr/lib/" 2>/dev/null || true
-            fi
-            break
-        fi
-    done
-fi
-
-if [[ $FUSE_FOUND -eq 0 ]]; then
-    echo "⚠ FUSE library not found (AppImage may use system FUSE)"
-fi
-
-echo ""
+# We skip manual bundling because LinuxDeploy will handle it automatically.
 
 ################################################################################
-# STEP 7: Include GTK modules
-################################################################################
-
-echo "Step 7: Including GTK modules"
-echo "─────────────────────────────────────────────────────────────────────"
-
-GTK_VERSION=$(pkg-config --modversion gtk+-3.0 2>/dev/null || echo "3.0")
-GTK_MODULE_DIR=""
-
-for path in /usr/lib*/gtk-${GTK_VERSION}/modules /usr/lib/gtk-${GTK_VERSION}/modules; do
-    if [[ -d "$path" ]]; then
-        GTK_MODULE_DIR="$path"
-        break
-    fi
-done
-
-if [[ -n "$GTK_MODULE_DIR" ]]; then
-    mkdir -p "${APPDIR}/usr/lib/gtk-${GTK_VERSION}/modules"
-    cp -r "$GTK_MODULE_DIR"/* "${APPDIR}/usr/lib/gtk-${GTK_VERSION}/modules/" 2>/dev/null || true
-    echo "✓ GTK modules copied (${GTK_VERSION})"
-else
-    echo "⚠ GTK modules directory not found"
-fi
-
-echo ""
-
-################################################################################
-# STEP 8: Create AppRun (Dispatcher Mode - Symlink Ready)
+# STEP 8: Create AppRun (Source File)
 ################################################################################
 
 echo "Step 8: Creating AppRun"
 echo "─────────────────────────────────────────────────────────────────────"
 
-# PART 1: Inject the version number
-cat >"${APPDIR}/AppRun" <<EOF
+# FIX: We create "AppRun.source" in the build dir, NOT inside APPDIR.
+# This prevents the "cannot copy file to itself" error in Step 13.
+
+cat >"AppRun.source" <<EOF
 #!/bin/bash
 
 # Injected by build script
 EMACS_VER="${APP_VERSION}"
 EOF
 
-# PART 2: The Logic
-cat >>"${APPDIR}/AppRun" <<'APPRUN_EOF'
+cat >>"AppRun.source" <<'APPRUN_EOF'
 
 HERE="$(dirname "$(readlink -f "${0}")")"
 
@@ -334,7 +233,6 @@ export GTK_MODULES=""
 export UBUNTU_MENUPROXY=0
 export NO_AT_BRIDGE=1
 
-# Use the EMACS_VER variable we defined at the top
 ARCH_LIBEXEC="${HERE}/usr/libexec/emacs/${EMACS_VER}/x86_64-pc-linux-gnu"
 ARCH_BIN="${HERE}/usr/bin"
 
@@ -367,15 +265,12 @@ BIN_NAME=$(basename "${ARGV0:-$0}")
 TARGET_BIN="emacs"
 ARGS=("$@")
 
-# Check if called via symlink (e.g., ./emacsclient)
 if [[ "$BIN_NAME" == "emacsclient"* ]]; then
     TARGET_BIN="emacsclient"
 fi
 
-# Check if first argument is a command (e.g., ./AppImage emacsclient)
 if [[ "${1:-}" == "emacsclient" ]] || [[ "${1:-}" == "ctags" ]] || [[ "${1:-}" == "etags" ]]; then
     TARGET_BIN="$1"
-    # Remove the first argument since we consumed it
     ARGS=("${@:2}")
 fi
 
@@ -383,7 +278,6 @@ fi
 # 3. Launch
 # ---------------------------------------------------------
 if [[ "$TARGET_BIN" == "emacs" ]]; then
-    # Run Emacs (Main Editor)
     DUMP_FILE="${ARCH_LIBEXEC}/emacs.pdmp"
     if [[ -f "$DUMP_FILE" ]]; then
         exec "${ARCH_BIN}/emacs" --dump-file="$DUMP_FILE" "${ARGS[@]}"
@@ -391,13 +285,12 @@ if [[ "$TARGET_BIN" == "emacs" ]]; then
         exec "${ARCH_BIN}/emacs" "${ARGS[@]}"
     fi
 else
-    # Run Tool (emacsclient, ctags, etags)
     exec "${ARCH_BIN}/${TARGET_BIN}" "${ARGS[@]}"
 fi
 APPRUN_EOF
 
-chmod +x "${APPDIR}/AppRun"
-echo "✓ AppRun created (Dispatcher enabled)"
+chmod +x "AppRun.source"
+echo "✓ AppRun source created"
 echo ""
 
 ################################################################################
@@ -414,7 +307,6 @@ SRC_DIR="emacs-${APP_VERSION}"
 if [[ -n "${ICON_URL}" ]]; then
     echo "  Downloading custom icon from ${ICON_URL}..."
     if wget -q -O "${APPDIR}/emacs.png" "${ICON_URL}"; then
-        # Convert .icns if needed
         if [[ "${ICON_URL}" == *.icns ]] && command -v magick &>/dev/null; then
             magick "${APPDIR}/emacs.png" "${APPDIR}/emacs-temp.png" 2>/dev/null
             mv "${APPDIR}/emacs-temp.png" "${APPDIR}/emacs.png"
@@ -428,15 +320,12 @@ fi
 
 # 2. Try Source Tree Icons (Best Quality First)
 if [[ $ICON_FOUND -eq 0 ]]; then
-    # Define a list of preferred icon paths in the source tree
-    # We prefer 128x128 or scalable (SVG) over 48x48
     declare -a ICON_PATHS=(
         "${SRC_DIR}/etc/images/icons/hicolor/128x128/apps/emacs.png"
         "${SRC_DIR}/etc/images/icons/hicolor/scalable/apps/emacs.svg"
         "${SRC_DIR}/etc/images/icons/hicolor/48x48/apps/emacs.png"
         "${SRC_DIR}/etc/images/emacs.png"
     )
-
     for path in "${ICON_PATHS[@]}"; do
         if [[ -f "$path" ]]; then
             cp "$path" "${APPDIR}/emacs.png"
@@ -447,16 +336,14 @@ if [[ $ICON_FOUND -eq 0 ]]; then
     done
 fi
 
-# 3. Try Installed Icons (In AppDir)
+# 3. Try Installed Icons
 if [[ $ICON_FOUND -eq 0 ]]; then
-    # Check where make install might have put them
     declare -a INSTALLED_PATHS=(
         "${APPDIR}/usr/share/icons/hicolor/128x128/apps/emacs.png"
         "${APPDIR}/usr/share/icons/hicolor/scalable/apps/emacs.svg"
         "${APPDIR}/usr/share/icons/hicolor/48x48/apps/emacs.png"
         "${APPDIR}/usr/share/emacs/${APP_VERSION}/etc/images/emacs.png"
     )
-
     for path in "${INSTALLED_PATHS[@]}"; do
         if [[ -f "$path" ]]; then
             cp "$path" "${APPDIR}/emacs.png"
@@ -470,29 +357,15 @@ fi
 # 4. Fallback (The "Black Icon" Prevention)
 if [[ $ICON_FOUND -eq 0 ]]; then
     echo "⚠ No icon found! Creating a temporary SVG..."
-
-    # Create a proper purple SVG instead of a broken binary
     cat >"${APPDIR}/emacs.svg" <<EOF
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <rect width="256" height="256" fill="#7f5ab6" rx="40" ry="40"/>
   <text x="128" y="168" font-size="140" text-anchor="middle" fill="white" font-family="sans-serif" font-weight="bold">E</text>
 </svg>
 EOF
-    # Move it to emacs.png (appimagetool handles SVGs named png fine usually,
-    # but strictly we should keep extension. For simplicity we name it emacs.png
-    # if appimagetool complains we can rename).
-    # Actually, let's keep it proper:
     mv "${APPDIR}/emacs.svg" "${APPDIR}/emacs.png"
     echo "✓ Created fallback SVG icon"
 fi
-
-# Final Check
-if [[ -f "${APPDIR}/emacs.png" ]]; then
-    echo "✓ Icon setup complete: $(du -h "${APPDIR}/emacs.png" | cut -f1)"
-else
-    echo "❌ ERROR: Failed to setup icon"
-fi
-
 echo ""
 
 ################################################################################
@@ -502,7 +375,7 @@ echo ""
 echo "Step 10: Creating desktop entry"
 echo "─────────────────────────────────────────────────────────────────────"
 
-cat >"${APPDIR}/emacs.desktop" <<'EOF'
+cat >"${APPDIR}/emacs.desktop" <<EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
@@ -516,62 +389,111 @@ Categories=Development;TextEditor;
 MimeType=text/plain;text/x-c;text/x-java;text/x-lisp;text/x-python;text/x-latex;text/x-shellscript;
 Keywords=text;editor;development;
 EOF
-
 echo "✓ Desktop entry created"
 echo ""
 
 ################################################################################
-# STEP 11: Build AppImage Structure
+# STEP 11: Prepare AppDir for LinuxDeploy
 ################################################################################
 
-echo "Step 11: Building AppImage structure"
+echo "Step 11: Preparing AppDir"
 echo "─────────────────────────────────────────────────────────────────────"
-
-mkdir -p "${APPDIR}/.dir"
-cp -r "${APPDIR}/usr" "${APPDIR}/.dir/"
-cp "${APPDIR}/AppRun" "${APPDIR}/.dir/"
-chmod +x "${APPDIR}/.dir/AppRun"
-
-# Copy icon and desktop to root
-[[ -f "${APPDIR}/emacs.png" ]] && cp "${APPDIR}/emacs.png" "${APPDIR}/.dir/"
-[[ -f "${APPDIR}/emacs.desktop" ]] && cp "${APPDIR}/emacs.desktop" "${APPDIR}/.dir/"
-
-# Create icon directory structure
-mkdir -p "${APPDIR}/.dir/usr/share/icons/hicolor/256x256/apps"
-[[ -f "${APPDIR}/.dir/emacs.png" ]] &&
-    cp "${APPDIR}/.dir/emacs.png" "${APPDIR}/.dir/usr/share/icons/hicolor/256x256/apps/"
-
-echo "✓ Structure ready"
+if [[ ! -f "${APPDIR}/emacs.desktop" ]] || [[ ! -f "${APPDIR}/emacs.png" ]]; then
+    # We copy them just in case they aren't at root
+    cp "${APPDIR}/emacs.desktop" "${APPDIR}/" 2>/dev/null || true
+    cp "${APPDIR}/emacs.png" "${APPDIR}/" 2>/dev/null || true
+fi
+echo "✓ AppDir ready for deployment"
 echo ""
 
 ################################################################################
-# STEP 12: Download AppImage Tools
+# STEP 12: Download & Extract Build Tools (FUSE-Safe)
 ################################################################################
 
-echo "Step 12: Downloading appimagetool"
+echo "Step 12: Preparing Build Tools"
 echo "─────────────────────────────────────────────────────────────────────"
 
-if [[ ! -f appimagetool ]]; then
-    wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
-    chmod +x appimagetool-x86_64.AppImage
-    mv appimagetool-x86_64.AppImage appimagetool
+# 1. LinuxDeploy
+if [[ ! -d "linuxdeploy-build" ]]; then
+    echo "  Downloading linuxdeploy..."
+    wget -q -O linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+    chmod +x linuxdeploy
+
+    # EXTRACT it to avoid FUSE requirement during build
+    ./linuxdeploy --appimage-extract >/dev/null
+    mv squashfs-root linuxdeploy-build
+    rm linuxdeploy
 fi
 
-echo "✓ Ready"
+# 2. AppImageTool
+if [[ ! -d "appimagetool-build" ]]; then
+    echo "  Downloading appimagetool..."
+    wget -q -O appimagetool "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+    chmod +x appimagetool
+
+    # EXTRACT it too
+    ./appimagetool --appimage-extract >/dev/null
+    mv squashfs-root appimagetool-build
+    rm appimagetool
+fi
+
+# Add tools to PATH so linuxdeploy can find appimagetool
+export PATH="$(pwd)/linuxdeploy-build/usr/bin:$(pwd)/appimagetool-build/usr/bin:${PATH}"
+
+echo "✓ Tools extracted and ready"
 echo ""
 
 ################################################################################
-# STEP 13: Create AppImage
+# STEP 13: Create AppImage (via Extracted LinuxDeploy)
 ################################################################################
 
-echo "Step 13: Creating AppImage"
+echo "Step 13: Bundling and Creating AppImage"
 echo "─────────────────────────────────────────────────────────────────────"
 
-./appimagetool --appimage-extract-and-run "${APPDIR}/.dir" "${OUTPUT}"
-chmod +x "${OUTPUT}"
+export VERSION="${APP_VERSION}"
+export NO_STRIP=1
 
-SIZE=$(du -h "${OUTPUT}" | cut -f1)
-echo "✓ Created: ${OUTPUT} (${SIZE})"
+# We EXCLUDE the core GTK/GLib stack.
+# Why? Because linuxdeploy bundles the libraries but misses the schemas/resources,
+# causing the "Gtk-CRITICAL" crashes. By excluding them, we force the AppImage
+# to use the HOST system's GTK, which is correctly configured.
+
+"$(pwd)/linuxdeploy-build/AppRun" \
+    --appdir "${APPDIR}" \
+    --executable "${APPDIR}/usr/bin/emacs" \
+    --desktop-file "${APPDIR}/emacs.desktop" \
+    --icon-file "${APPDIR}/emacs.png" \
+    --custom-apprun "AppRun.source" \
+    --exclude-library libgtk-3.so.0 \
+    --exclude-library libgdk-3.so.0 \
+    --exclude-library libglib-2.0.so.0 \
+    --exclude-library libgio-2.0.so.0 \
+    --exclude-library libgobject-2.0.so.0 \
+    --exclude-library libpango-1.0.so.0 \
+    --exclude-library libpangocairo-1.0.so.0 \
+    --exclude-library libcairo.so.2 \
+    --exclude-library libcairo-gobject.so.2 \
+    --output appimage
+
+# Rename Output
+GENERATED_NAME="Emacs-${APP_VERSION}-x86_64.AppImage"
+
+if [[ -f "${GENERATED_NAME}" ]]; then
+    mv "${GENERATED_NAME}" "${OUTPUT}"
+    chmod +x "${OUTPUT}"
+    echo "✓ AppImage created: ${OUTPUT}"
+else
+    # Fallback search
+    FOUND=$(find . -maxdepth 1 -name "*.AppImage" | head -n 1)
+    if [[ -n "$FOUND" ]]; then
+        mv "$FOUND" "${OUTPUT}"
+        chmod +x "${OUTPUT}"
+        echo "✓ AppImage created: ${OUTPUT}"
+    else
+        echo "❌ LinuxDeploy failed to create output file"
+        exit 1
+    fi
+fi
 echo ""
 
 ################################################################################
@@ -580,10 +502,9 @@ echo ""
 
 echo "Step 14: Cleanup"
 echo "─────────────────────────────────────────────────────────────────────"
-
-rm -rf "${APPDIR}" "emacs-${APP_VERSION}"
-
-echo "✓ Cleaned"
+rm -rf "${APPDIR}" "emacs-${APP_VERSION}" "AppRun.source"
+# NOTE: We keep linuxdeploy-build/appimagetool-build folders to speed up re-runs.
+echo "✓ Cleaned build files"
 echo ""
 
 ################################################################################
@@ -592,50 +513,20 @@ echo ""
 
 echo "Step 15: Testing"
 echo "─────────────────────────────────────────────────────────────────────"
+export APPIMAGE_EXTRACT_AND_RUN=1
 
 "./${OUTPUT}" --version 2>&1 | head -2
 echo ""
-
-# Test without FUSE requirement
 echo "Testing Emacs batch mode..."
 if "./${OUTPUT}" -Q -batch -eval '(message "Emacs works!")' 2>&1 | grep -q "Emacs works"; then
     echo "✓ Emacs is working correctly"
 else
     echo "⚠ Batch test result unclear (may still work)"
 fi
-
 echo ""
-
-################################################################################
-# SUCCESS
-################################################################################
 
 echo "═════════════════════════════════════════════════════════════════════════"
 echo "✓✓✓ BUILD SUCCESSFUL ✓✓✓"
 echo "═════════════════════════════════════════════════════════════════════════"
-echo ""
 echo "AppImage:  ${OUTPUT}"
-echo ""
-echo "Ready to use:"
-echo "  ./${OUTPUT}"
-echo ""
-echo "Features:"
-echo "  ✓ Emacs ${APP_VERSION}"
-echo "  ✓ CPU-native optimizations (-O3 -march=native)"
-echo "  ✓ Native compilation (AOT)"
-echo "  ✓ Tree-sitter support"
-echo "  ✓ Xwidgets"
-echo "  ✓ FUSE auto-detection (fuse2 or fuse3)"
-echo "  ✓ GTK modules included"
-echo "  ✓ pdmp file included"
-echo "  ✓ Icon embedded"
-echo "  ✓ EMACSPATH configured"
-echo "  ✓ Fully portable"
-echo ""
-echo "Notes:"
-echo "  - Run with: ./${OUTPUT}"
-echo "  - First launch may take a moment (pdmp generation)"
-echo "  - Icon should display in application menus"
-echo "  - No 'arch-dependent data dir' warnings"
-echo "  - No GTK module warnings"
 echo ""
