@@ -96,7 +96,7 @@ EMACS_CONFIGURE_OPTS=(
     --with-native-compilation=aot --with-tree-sitter --with-xinput2
     --with-xwidgets --with-dbus --with-harfbuzz --with-libsystemd
     --with-sqlite3 --prefix=/usr
-    CFLAGS="-O3 -march=native -pipe -fomit-frame-pointer -DFDSETSIZE=10000"
+    CFLAGS="-O2 -march=native -pipe -fomit-frame-pointer -DFDSETSIZE=10000"
 )
 
 ################################################################################
