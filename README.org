@@ -87,6 +87,35 @@ Pass the command as the first argument to the AppImage.
   #+end_src
 - *Black Icon:* If the icon appears black/blank, the build script automatically generates a fallback SVG. Ensure your desktop environment supports SVG icons.
 
+*** The Technical Difficulty with xwidget
+
+You can think of the browser widget (xwidget) as an artist painting a picture, and Emacs as the gallery displaying it.
+
+1. =WEBKIT_DISABLE_COMPOSITING_MODE=1= (The "Nuclear" Option)
+
+    What happens: The browser stops using the GPU completely. The CPU has to calculate every pixel of the website, draw it, and then hand it to Emacs.
+
+    Result: High stability, but Slow.
+
+    Feel: Scrolling large pages might feel sluggish, and watching videos inside Emacs will consume 100% of a CPU core.
+
+2. =WEBKIT_DISABLE_DMABUF_RENDERER=1= (The "Surgical" Option)
+
+    What happens: The browser still uses your AMD GPU to render the website quickly.
+
+    The Change: Normally, the browser tries to hand that finished image directly to Emacs via a fast hardware shortcut (DMABuf). This shortcut is what is crashing. By setting this flag, you force the browser to take a slightly slower route (copying the image to system memory first) to hand it over to Emacs.
+
+    Result: Fast. The GPU still does the hard work; the only "slow" part is the hand-off, which is negligible on modern AMD cards.
+
+    | Feature        | DISABLE_COMPOSITING_MODE    | DISABLE_DMABUF_RENDERER |
+    |----------------+-----------------------------+-------------------------|
+    | Page Rendering | CPU (Slow)                  | GPU (Fast)              |
+    | Video Playback | Choppy / High CPU usage     | Smooth                  |
+    | Crash Fix?     | Yes                         | Yes                     |
+    | Recommended?   | Only if the other one fails | Yes                     |
+
+ This need to be updated in =emacs.desktop=
+
 * Credits & Inspiration
 This project builds upon the hard work of the community. Special thanks to:
 
