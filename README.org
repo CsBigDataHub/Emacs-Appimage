@@ -89,7 +89,8 @@ Pass the command as the first argument to the AppImage.
 
 *** The Technical Difficulty with xwidget
 
-You can think of the browser widget (xwidget) as an artist painting a picture, and Emacs as the gallery displaying it.
+=WebKitGTK= (used by Emacs xwidgets for web rendering) is attempting to initialize hardware-accelerated OpenGL rendering, but your current Wayland/GDK backend cannot provide a valid GL context.
+Users experience crashes or black screen when using =xwidgets= due to this. These are 2 options to fix that -
 
 1. =WEBKIT_DISABLE_COMPOSITING_MODE=1= (The "Nuclear" Option)
 
