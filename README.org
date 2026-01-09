@@ -21,7 +21,7 @@ These approaches have been adapted for Linux AppImage compatibility with a focus
 
 ** Key Features
 - *Version:* Builds Emacs 30.2 (configurable)
-- *Performance:* Compiled with =-O3 -march=native=, Native Compilation (AOT), and pure GTK3 (PGTK)
+- *Performance:* Compiled with =-O2 -march=native=, Native Compilation (AOT), and pure GTK3 (PGTK)
 - *Modern Features:* Includes Tree-sitter, JSON, SVG, and **Xwidgets with WebKitGTK** for embedded web browsing
 - *Native Look & Feel:* Uses the host system's GTK theme and fonts (fixes common AppImage UI ugliness)
 - *Smart Dispatcher:* Acts as =emacs= or =emacsclient= depending on how it is invoked
