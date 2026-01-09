@@ -271,7 +271,7 @@ You can set both variables simultaneously - it's safe and won't cause conflicts.
 
 * Desktop Integration Features
 
-** GearLever Support
+** [[https://github.com/mijorus/gearlever][GearLever Support]
 The desktop integration script creates two desktop entries:
 
 1. *Emacs* - Main editor with full functionality
