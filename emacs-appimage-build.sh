@@ -1,35 +1,36 @@
 #!/bin/bash
+
 ################################################################################
 #                                                                              #
-#  EMACS APPIMAGE - WITH PATH INJECTION (EMACS-PLUS STYLE)                    #
+#  CLEAN EMACS APPIMAGE BUILDER (NO PATH INJECTION)                            #
+#  Respects system PATH and Zsh configuration                                  #
 #                                                                              #
 ################################################################################
+
 set -euo pipefail
+
+# Configuration
 APP_VERSION="30.2"
 OUTPUT="emacs-${APP_VERSION}-x86_64.AppImage"
 ICON_URL=""
 APPDIR="$(pwd)/AppDir"
 TARGET_UID=$(id -u)
 TARGET_GID=$(id -g)
-BUILD_PATH="${PATH}"
 
 show_help() {
     cat <<EOF
 Usage: $0 [OPTIONS]
+
 Options:
   --icon, -i ICON_URL          Download custom icon from URL
   --version, -v VERSION        Emacs version (default: 30.2)
   --output, -o OUTPUT          Output filename
   --uid UID                    Target user ID for file ownership
   --gid GID                    Target group ID for file ownership
-  --inject-path PATH           Custom PATH to inject (default: current PATH)
-  --no-path-injection          Disable PATH injection feature
   --help, -h                   Show this help
 EOF
     exit 0
 }
-
-ENABLE_PATH_INJECTION=true
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -54,14 +55,6 @@ while [[ $# -gt 0 ]]; do
             TARGET_GID="$2"
             shift 2
             ;;
-        --inject-path)
-            BUILD_PATH="$2"
-            shift 2
-            ;;
-        --no-path-injection)
-            ENABLE_PATH_INJECTION=false
-            shift
-            ;;
         --help | -h) show_help ;;
         *)
             echo "ERROR: Unknown option: $1"
@@ -71,17 +64,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "═══════════════════════════════════════════════════════════════════════"
-echo "  EMACS APPIMAGE WITH PATH INJECTION"
+echo "  EMACS APPIMAGE BUILDER (CLEAN)"
 echo "═══════════════════════════════════════════════════════════════════════"
 echo "Configuration:"
 echo "  Version:           ${APP_VERSION}"
 echo "  Output:            ${OUTPUT}"
 echo "  Custom Icon:       ${ICON_URL:-None}"
-echo "  Target User:       ${TARGET_UID}:${TARGET_GID}"
-echo "  PATH Injection:    ${ENABLE_PATH_INJECTION}"
-if [[ "${ENABLE_PATH_INJECTION}" == "true" ]]; then
-    echo "  Injected PATH:     ${BUILD_PATH}"
-fi
 echo ""
 
 BUILD_DEPS=(
@@ -159,6 +147,7 @@ echo "────────────────────────�
 mkdir -p "${APPDIR}/usr/bin" "${APPDIR}/usr/lib" "${APPDIR}/usr/share"
 cd "emacs-${APP_VERSION}"
 
+# Fix WebKit version check if necessary
 if grep -q "WEBKIT_BROKEN=2.41.92" configure.ac 2>/dev/null; then
     sed -i 's/WEBKIT_BROKEN=2.41.92/WEBKIT_BROKEN=2.51.92/' configure.ac 2>/dev/null || true
 fi
@@ -214,7 +203,6 @@ fi
 if [[ -n "${LIBGCCJIT_PATH}" ]]; then
     LIBGCCJIT_DIR=$(dirname "${LIBGCCJIT_PATH}")
     echo "  Found libgccjit: ${LIBGCCJIT_PATH}"
-    echo "  Library dir: ${LIBGCCJIT_DIR}"
 else
     echo "  ⚠ libgccjit not found"
 fi
@@ -222,130 +210,64 @@ echo "✓ Native-comp detection complete"
 echo ""
 
 ################################################################################
-# STEP 7: Create AppRun (FIXED FOR MISE/ASDF AND PATH SANITIZATION)
+# STEP 7: Create AppRun (STANDARD)
 ################################################################################
-echo "Step 7: Creating AppRun with PATH injection"
+echo "Step 7: Creating Standard AppRun"
 echo "───────────────────────────────────────────────────────────────────────"
-
-# Initialize standard paths
-INJECTED_PATHS="/usr/local/bin:/usr/local/sbin"
-
-# 1. Resolve GCC to its REAL path (Bypassing Shims)
-if command -v gcc &>/dev/null; then
-    # Use readlink -f to follow the shim to the actual executable
-    REAL_GCC=$(readlink -f "$(which gcc)")
-    GCC_DIR=$(dirname "$REAL_GCC")
-
-    # Only add if it doesn't look like a shim directory
-    if [[ ! "$GCC_DIR" =~ "/shims" ]]; then
-        INJECTED_PATHS="${GCC_DIR}:${INJECTED_PATHS}"
-        echo "  ✓ Resolved real GCC path: ${GCC_DIR}"
-    else
-        echo "  ⚠ Skipped GCC path because it resolved to a shim: ${GCC_DIR}"
-    fi
-fi
-
-if [[ -d "$HOME/.local/bin" ]]; then
-    INJECTED_PATHS="$HOME/.local/bin:${INJECTED_PATHS}"
-fi
 
 cat >"AppRun.source" <<EOF
 #!/bin/bash
+HERE="\$(dirname "\$(readlink -f "\${0}")")"
 EMACS_VER="${APP_VERSION}"
-EOF
 
-if [[ "${ENABLE_PATH_INJECTION}" == "true" ]]; then
-    cat >>"AppRun.source" <<EOF
-INJECTED_PATHS="${INJECTED_PATHS}"
-DISABLE_INJECTION="\${EMACS_PLUS_NO_PATH_INJECTION:-}"
-EOF
-    echo "  ✓ PATH injection enabled"
-else
-    cat >>"AppRun.source" <<EOF
-DISABLE_INJECTION="1"
-EOF
-    echo "  ℹ PATH injection disabled"
-fi
-
-cat >>"AppRun.source" <<'APPRUN_EOF'
-HERE="$(dirname "$(readlink -f "${0}")")"
-
-# 1. Aggressive Environment Cleanup
-# Unset mise/asdf/env vars that confuse subprocesses
-unset GTK_MODULES MISE_SHELL MISE_ORIGINAL_PATH ASDF_DIR ASDF_DATA_DIR
-unset RBENV_SHELL PYENV_SHELL NODENV_SHELL GOENV_SHELL
-for var in $(env 2>/dev/null | grep -E '^(MISE_|ASDF_|RUBY_|GEM_)' | cut -d= -f1); do unset "$var" 2>/dev/null || true; done
-unset EMACSLOADPATH EMACSDATA EMACSPATH EMACSDOC EMACSDIR EMACS_BASE INFOPATH
-unset NATIVE_COMP_DRIVER_OPTIONS NATIVE_COMP_COMPILER_OPTIONS
-
-export GTK_MODULES="" UBUNTU_MENUPROXY=0 NO_AT_BRIDGE=1
-
-ARCH_LIBEXEC="${HERE}/usr/libexec/emacs/${EMACS_VER}/x86_64-pc-linux-gnu"
-ARCH_BIN="${HERE}/usr/bin"
-
-# 2. Robust PATH Construction (Shim Filtering)
-if [[ -z "${DISABLE_INJECTION}" ]]; then
-    # Start with Emacs internal bin
-    FINAL_PATH_LIST="${ARCH_BIN}"
-
-    # Combine User Path and Injected Path
-    RAW_PATH="${INJECTED_PATHS:-}:${PATH:-}"
-
-    # Iterate and Filter
-    IFS=':' read -ra PATHS <<< "$RAW_PATH"
-    for p in "${PATHS[@]}"; do
-        # SKIP if empty
-        [[ -z "$p" ]] && continue
-        # SKIP if it is a shim directory (mise, asdf, etc)
-        [[ "$p" =~ (mise|asdf|rbenv|pyenv|nodenv|goenv)/shims ]] && continue
-        # SKIP if already in our new path
-        [[ ":${FINAL_PATH_LIST}:" == *":${p}:"* ]] && continue
-
-        FINAL_PATH_LIST="${FINAL_PATH_LIST}:${p}"
-    done
-
-    # Add standard system paths at the very end as fallback
-    FINAL_PATH_LIST="${FINAL_PATH_LIST}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
-    export PATH="${FINAL_PATH_LIST}"
-
-    # Set CC only if we found a valid gcc in our cleaned path
-    if command -v gcc &>/dev/null; then
-        export CC="$(command -v gcc)"
-    fi
-else
-    export PATH="${ARCH_BIN}:/usr/local/bin:/usr/bin:/bin"
-fi
-
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib64:${LD_LIBRARY_PATH:-}"
-export LIBRARY_PATH="/usr/lib:/usr/lib64:/usr/lib/gcc:/usr/lib/x86_64-linux-gnu:${LIBRARY_PATH:-}"
-export EMACSPATH="${ARCH_LIBEXEC}:${ARCH_BIN}"
-export EMACSDIR="${HERE}/usr/share/emacs"
-export EMACSDATA="${HERE}/usr/share/emacs/${EMACS_VER}/etc"
-export EMACSDOC="${HERE}/usr/share/emacs/${EMACS_VER}/etc"
-export EMACSLOADPATH="${HERE}/usr/share/emacs/${EMACS_VER}/lisp:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/emacs-lisp:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/progmodes:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/language:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/international:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/textmodes:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/vc:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/net:${HERE}/usr/share/emacs/site-lisp"
-export FONTCONFIG_PATH="${HERE}/etc/fonts"
+# 1. Set up Emacs Paths
+export ARCH_LIBEXEC="\${HERE}/usr/libexec/emacs/\${EMACS_VER}/x86_64-pc-linux-gnu"
+export ARCH_BIN="\${HERE}/usr/bin"
+export EMACSPATH="\${ARCH_LIBEXEC}:\${ARCH_BIN}"
+export EMACSDIR="\${HERE}/usr/share/emacs"
+export EMACSDATA="\${HERE}/usr/share/emacs/\${EMACS_VER}/etc"
+export EMACSDOC="\${HERE}/usr/share/emacs/\${EMACS_VER}/etc"
+export EMACSLOADPATH="\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/emacs-lisp:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/progmodes:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/language:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/international:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/textmodes:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/vc:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/net:\${HERE}/usr/share/emacs/site-lisp"
+export FONTCONFIG_PATH="\${HERE}/etc/fonts"
 export LIBFUSE_DISABLE_THREAD_SPAWNING=1
 
+# 2. Library Paths
+export LD_LIBRARY_PATH="\${HERE}/usr/lib:\${HERE}/usr/lib64:\${LD_LIBRARY_PATH:-}"
+export LIBRARY_PATH="/usr/lib:/usr/lib64:/usr/lib/gcc:/usr/lib/x86_64-linux-gnu:\${LIBRARY_PATH:-}"
+
+# 3. Standard PATH Handling (Prepend Emacs, Keep System Tools)
+# This allows your .zshenv configuration (mise/shims) to work correctly.
+export PATH="\${ARCH_BIN}:\${PATH}"
+
 # Detect binary to run
-BIN_NAME=$(basename "${ARGV0:-$0}")
+BIN_NAME=\$(basename "\${ARGV0:-\$0}")
 TARGET_BIN="emacs"
-ARGS=("$@")
-[[ "$BIN_NAME" == "emacsclient"* ]] && TARGET_BIN="emacsclient"
-[[ "${1:-}" =~ ^(emacsclient|ctags|etags)$ ]] && TARGET_BIN="$1" && ARGS=("${@:2}")
+ARGS=("\$@")
+
+if [[ "\$BIN_NAME" == "emacsclient"* ]]; then
+    TARGET_BIN="emacsclient"
+fi
+
+if [[ "\${1:-}" =~ ^(emacsclient|ctags|etags)\$ ]]; then
+    TARGET_BIN="\$1"
+    ARGS=("\${@:2}")
+fi
 
 # Launch
-if [[ "$TARGET_BIN" == "emacs" ]]; then
-    DUMP_FILE="${ARCH_LIBEXEC}/emacs.pdmp"
-    [[ -f "$DUMP_FILE" ]] && exec "${ARCH_BIN}/emacs" --name "emacs-appimage" --dump-file="$DUMP_FILE" "${ARGS[@]}"
-    exec "${ARCH_BIN}/emacs" --name "emacs-appimage" "${ARGS[@]}"
+if [[ "\$TARGET_BIN" == "emacs" ]]; then
+    DUMP_FILE="\${ARCH_LIBEXEC}/emacs.pdmp"
+    if [[ -f "\$DUMP_FILE" ]]; then
+        exec "\${ARCH_BIN}/emacs" --name "emacs-appimage" --dump-file="\$DUMP_FILE" "\${ARGS[@]}"
+    else
+        exec "\${ARCH_BIN}/emacs" --name "emacs-appimage" "\${ARGS[@]}"
+    fi
 else
-    exec "${ARCH_BIN}/${TARGET_BIN}" "${ARGS[@]}"
+    exec "\${ARCH_BIN}/\${TARGET_BIN}" "\${ARGS[@]}"
 fi
-APPRUN_EOF
+EOF
 
 chmod +x "AppRun.source"
-echo "✓ AppRun created (Deep mise/shim filtering applied)"
+echo "✓ AppRun created (Compatible with mise/system tools)"
 echo ""
 
 ################################################################################
@@ -361,7 +283,6 @@ if [[ -n "${ICON_URL}" ]]; then
     echo "  Downloading custom icon from: ${ICON_URL}"
     if wget -q -O "${TEMP_ICON}" "${ICON_URL}"; then
         if file "${TEMP_ICON}" | grep -qi "image"; then
-            echo "  ✓ Downloaded and verified image"
             if [[ "${ICON_URL}" == *.icns ]] && command -v magick &>/dev/null; then
                 magick "${TEMP_ICON}" "${APPDIR}/${ICON_NAME}" 2>/dev/null
                 rm "${TEMP_ICON}"
@@ -374,18 +295,16 @@ if [[ -n "${ICON_URL}" ]]; then
                 fi
             fi
             ICON_FOUND=1
-            echo "  ✓ Custom icon processed: ${APPDIR}/${ICON_NAME}"
+            echo "  ✓ Custom icon processed"
         else
-            echo "  ✗ Downloaded file is not a valid image!"
+            echo "  ✗ Invalid image file"
             rm "${TEMP_ICON}"
         fi
-    else
-        echo "  ✗ Failed to download custom icon"
     fi
 fi
 
 if [[ $ICON_FOUND -eq 0 ]]; then
-    echo "  Using fallback Emacs icon from source..."
+    echo "  Using fallback Emacs icon..."
     declare -a ICON_PATHS=(
         "emacs-${APP_VERSION}/etc/images/icons/hicolor/128x128/apps/emacs.png"
         "emacs-${APP_VERSION}/etc/images/emacs.png"
@@ -400,7 +319,7 @@ if [[ $ICON_FOUND -eq 0 ]]; then
 fi
 
 if [[ $ICON_FOUND -eq 0 ]]; then
-    echo "  ⚠ No icon found! Creating fallback..."
+    echo "  ⚠ Creating generated icon..."
     cat >"${APPDIR}/emacs-appimage.svg" <<'EOF'
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <rect width="256" height="256" fill="#7f5ab6" rx="40" ry="40"/>
@@ -415,12 +334,13 @@ EOF
     fi
 fi
 
-echo "  Overwriting all internal icons..."
+# Ensure icon file exists
 if [[ ! -f "${APPDIR}/${ICON_NAME}" ]]; then
-    echo "  ✗ CRITICAL: No icon file found at ${APPDIR}/${ICON_NAME}"
+    echo "  ✗ Critical: No icon file found."
     exit 1
 fi
 
+# Install icons to hicolor
 TARGET_ICON_DIR="${APPDIR}/usr/share/icons/hicolor"
 for size in 16x16 22x22 24x24 32x32 48x48 64x64 128x128 256x256 512x512; do
     mkdir -p "${TARGET_ICON_DIR}/${size}/apps"
@@ -434,17 +354,7 @@ for size in 16x16 22x22 24x24 32x32 48x48 64x64 128x128 256x256 512x512; do
     fi
 done
 
-INTERNAL_IMG_DIR="${APPDIR}/usr/share/emacs/${APP_VERSION}/etc/images"
-mkdir -p "${INTERNAL_IMG_DIR}" "${INTERNAL_IMG_DIR}/icons"
-cp "${APPDIR}/${ICON_NAME}" "${INTERNAL_IMG_DIR}/emacs.png"
-cp "${APPDIR}/${ICON_NAME}" "${INTERNAL_IMG_DIR}/icons/emacs.png"
-
-mkdir -p "${APPDIR}/usr/share/pixmaps"
-cp "${APPDIR}/${ICON_NAME}" "${APPDIR}/usr/share/pixmaps/emacs.png"
-cp "${APPDIR}/${ICON_NAME}" "${APPDIR}/usr/share/pixmaps/emacs-appimage.png"
-
-find "${APPDIR}/usr/share" -type f \( -name "*emacs*.svg" -o -name "*emacs*.xpm" \) -delete 2>/dev/null || true
-echo "✓ Icon setup complete (${ICON_NAME})"
+echo "✓ Icon setup complete"
 echo ""
 
 ################################################################################
@@ -504,7 +414,7 @@ if [[ ! -d "appimagetool-build" ]]; then
 fi
 
 export PATH="$(pwd)/linuxdeploy-build/usr/bin:$(pwd)/appimagetool-build/usr/bin:${PATH}"
-echo "✓ Tools extracted and ready"
+echo "✓ Tools ready"
 echo ""
 
 ################################################################################
@@ -582,9 +492,4 @@ echo "════════════════════════�
 echo "✓✓✓ BUILD SUCCESSFUL ✓✓✓"
 echo "═══════════════════════════════════════════════════════════════════════"
 echo "AppImage:  ${OUTPUT}"
-echo ""
-echo "Fixes applied:"
-echo "  ✓ Filtered mise/asdf/rbenv/pyenv shims from PATH"
-echo "  ✓ Isolated native-comp cache to prevent loadup.el errors"
-echo "  ✓ Clean environment (no EMACSLOADPATH pollution)"
 echo ""
