@@ -2,27 +2,18 @@
 
 ################################################################################
 #                                                                              #
-#  EMACS APPIMAGE - ARCH LINUX UNIVERSAL FINAL VERSION                       #
-#                                                                              #
-#  Features:                                                                  #
-#  ✓ LinuxDeploy integration (Robust dependency bundling)                     #
-#  ✓ FUSE-Safe Build Process (Extracts tools to run without FUSE)             #
-#  ✓ CPU-native optimizations (-O3 -march=native)                             #
-#  ✓ Symlink Dispatcher (supports emacsclient symlinks)                       #
-#  ✓ Deep Icon Patching + Unique AppID (Fixes Dock & System Conflict)         #
-#  ✓ GearLever/Launcher Support (StartupWMClass + Permissions Fix)            #
-#  ✓ GTK Excluded (Uses host system theme/fonts)                              #
-#  ✓ NO SUDO Required (Proper permission handling from start)                 #
+#  CLEAN EMACS APPIMAGE BUILDER (NO PATH INJECTION)                            #
+#  Respects system PATH and Zsh configuration                                  #
 #                                                                              #
 ################################################################################
 
 set -euo pipefail
 
+# Configuration
 APP_VERSION="30.2"
 OUTPUT="emacs-${APP_VERSION}-x86_64.AppImage"
 ICON_URL=""
 APPDIR="$(pwd)/AppDir"
-# These will be set by command line args from Docker wrapper
 TARGET_UID=$(id -u)
 TARGET_GID=$(id -g)
 
@@ -73,16 +64,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "═══════════════════════════════════════════════════════════════════════"
-echo "  EMACS APPIMAGE - ARCH LINUX UNIVERSAL VERSION"
+echo "  EMACS APPIMAGE BUILDER (CLEAN)"
 echo "═══════════════════════════════════════════════════════════════════════"
 echo "Configuration:"
-echo "  Version:        ${APP_VERSION}"
-echo "  Output:         ${OUTPUT}"
-echo "  Custom Icon:    ${ICON_URL:-None}"
-echo "  Target User:    ${TARGET_UID}:${TARGET_GID}"
+echo "  Version:           ${APP_VERSION}"
+echo "  Output:            ${OUTPUT}"
+echo "  Custom Icon:       ${ICON_URL:-None}"
 echo ""
 
-# Arch Linux dependencies
 BUILD_DEPS=(
     base-devel git wget curl ca-certificates
     gtk3 cairo gdk-pixbuf2 pango libx11 libxcb libxext libxrender
@@ -114,20 +103,16 @@ EMACS_CONFIGURE_OPTS=(
 ################################################################################
 # STEP 1: Install Dependencies
 ################################################################################
-
 echo "Step 1: Installing Dependencies"
 echo "───────────────────────────────────────────────────────────────────────"
-
 sudo pacman -Syu --noconfirm
 sudo pacman -S --noconfirm "${BUILD_DEPS[@]}"
-
 echo "✓ Dependencies installed"
 echo ""
 
 ################################################################################
 # STEP 2: Ensure FUSE availability
 ################################################################################
-
 echo "Step 2: Ensuring FUSE availability"
 echo "───────────────────────────────────────────────────────────────────────"
 if [[ -f /usr/lib/libfuse.so.3 ]] || [[ -f /usr/lib64/libfuse.so.3 ]]; then
@@ -143,37 +128,30 @@ echo ""
 ################################################################################
 # STEP 3: Download Emacs
 ################################################################################
-
 echo "Step 3: Downloading Emacs ${APP_VERSION}"
 echo "───────────────────────────────────────────────────────────────────────"
-
 if [[ ! -d "emacs-${APP_VERSION}" ]]; then
     wget -c "https://ftp.gnu.org/gnu/emacs/emacs-${APP_VERSION}.tar.xz" 2>/dev/null ||
         wget -c "https://mirror.rackspace.com/gnu/emacs/emacs-${APP_VERSION}.tar.xz"
     tar -xf "emacs-${APP_VERSION}.tar.xz"
     rm -f "emacs-${APP_VERSION}.tar.xz"
 fi
-
 echo "✓ Source ready"
 echo ""
 
 ################################################################################
 # STEP 4: Build Emacs
 ################################################################################
-
 echo "Step 4: Building Emacs (30-45 minutes)"
 echo "───────────────────────────────────────────────────────────────────────"
-
 mkdir -p "${APPDIR}/usr/bin" "${APPDIR}/usr/lib" "${APPDIR}/usr/share"
-
 cd "emacs-${APP_VERSION}"
 
-# Update WEBKIT version if needed
+# Fix WebKit version check if necessary
 if grep -q "WEBKIT_BROKEN=2.41.92" configure.ac 2>/dev/null; then
     sed -i 's/WEBKIT_BROKEN=2.41.92/WEBKIT_BROKEN=2.51.92/' configure.ac 2>/dev/null || true
 fi
 
-# Regenerate configure
 if [[ -f autogen.sh ]]; then
     ./autogen.sh 2>&1 | tail -3 || true
 else
@@ -182,16 +160,12 @@ fi
 
 echo "  Configuring..."
 ./configure "${EMACS_CONFIGURE_OPTS[@]}" >/dev/null 2>&1
-
 echo "  Bootstrap..."
 make -j"$(nproc)" bootstrap 2>&1 | tail -3
-
 echo "  Building..."
 make -j"$(nproc)" 2>&1 | tail -3
-
 echo "  Installing..."
 make DESTDIR="${APPDIR}" install 2>&1 | tail -3
-
 echo "✓ Build complete"
 cd ..
 echo ""
@@ -199,14 +173,11 @@ echo ""
 ################################################################################
 # STEP 5: Setup arch-dependent directory
 ################################################################################
-
 echo "Step 5: Setting up arch-dependent directory"
 echo "───────────────────────────────────────────────────────────────────────"
-
 ARCH_DIR="${APPDIR}/usr/libexec/emacs/${APP_VERSION}/x86_64-pc-linux-gnu"
 mkdir -p "$ARCH_DIR"
 
-# Copy pdmp file from build output
 if [[ -f "emacs-${APP_VERSION}/src/emacs.pdmp" ]]; then
     cp "emacs-${APP_VERSION}/src/emacs.pdmp" "$ARCH_DIR/emacs.pdmp"
     echo "✓ Copied emacs.pdmp to ${ARCH_DIR}"
@@ -216,119 +187,106 @@ fi
 echo ""
 
 ################################################################################
-# STEP 8: Create AppRun (Source File with UNIQUE NAME FIX)
+# STEP 6: Detect compiler paths for native-comp
 ################################################################################
-
-echo "Step 8: Creating AppRun"
+echo "Step 6: Detecting native-comp dependencies"
 echo "───────────────────────────────────────────────────────────────────────"
+GCC_PATH=$(which gcc 2>/dev/null || echo "")
+LIBGCCJIT_PATH=$(find /usr/lib /usr/lib64 -name "libgccjit.so*" 2>/dev/null | head -n1 || echo "")
 
-# FIX: We create "AppRun.source" in the build dir, NOT inside APPDIR.
-cat >"AppRun.source" <<EOF
-#!/bin/bash
-
-# Injected by build script
-EMACS_VER="${APP_VERSION}"
-EOF
-
-cat >>"AppRun.source" <<'APPRUN_EOF'
-
-HERE="$(dirname "$(readlink -f "${0}")")"
-
-# ---------------------------------------------------------
-# 1. Setup Environment
-# ---------------------------------------------------------
-unset GTK_MODULES
-export GTK_MODULES=""
-export UBUNTU_MENUPROXY=0
-export NO_AT_BRIDGE=1
-
-ARCH_LIBEXEC="${HERE}/usr/libexec/emacs/${EMACS_VER}/x86_64-pc-linux-gnu"
-ARCH_BIN="${HERE}/usr/bin"
-
-export PATH="${ARCH_BIN}:${PATH}"
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib64:${LD_LIBRARY_PATH}"
-export EMACSPATH="${ARCH_LIBEXEC}:${ARCH_BIN}"
-
-export EMACS_BASE="${HERE}/usr/share/emacs"
-export EMACSDIR="${HERE}/usr/share/emacs"
-export EMACSDATA="${HERE}/usr/share/emacs/${EMACS_VER}/etc"
-export EMACSDOC="${HERE}/usr/share/emacs/${EMACS_VER}/etc"
-export EMACSLOADPATH="\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/emacs-lisp:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/progmodes:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/language:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/international:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/textmodes:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/vc:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/net:\
-${HERE}/usr/share/emacs/site-lisp"
-
-export FONTCONFIG_PATH="${HERE}/etc/fonts"
-export LIBFUSE_DISABLE_THREAD_SPAWNING=1
-
-# ---------------------------------------------------------
-# 2. Logic: Decide what to run (Emacs or Client?)
-# ---------------------------------------------------------
-BIN_NAME=$(basename "${ARGV0:-$0}")
-TARGET_BIN="emacs"
-ARGS=("$@")
-
-if [[ "$BIN_NAME" == "emacsclient"* ]]; then
-    TARGET_BIN="emacsclient"
-fi
-
-if [[ "${1:-}" == "emacsclient" ]] || [[ "${1:-}" == "ctags" ]] || [[ "${1:-}" == "etags" ]]; then
-    TARGET_BIN="$1"
-    ARGS=("${@:2}")
-fi
-
-# ---------------------------------------------------------
-# 3. Launch with UNIQUE APP ID
-# ---------------------------------------------------------
-if [[ "$TARGET_BIN" == "emacs" ]]; then
-    DUMP_FILE="${ARCH_LIBEXEC}/emacs.pdmp"
-    if [[ -f "$DUMP_FILE" ]]; then
-        # FIX: We use --name "emacs-appimage" to force a unique Window ID.
-        # This allows the Dock to distinguish this AppImage from System Emacs.
-        exec "${ARCH_BIN}/emacs" --name "emacs-appimage" --dump-file="$DUMP_FILE" "${ARGS[@]}"
-    else
-        exec "${ARCH_BIN}/emacs" --name "emacs-appimage" "${ARGS[@]}"
-    fi
+if [[ -n "${GCC_PATH}" ]]; then
+    echo "  Found GCC: ${GCC_PATH}"
 else
-    exec "${ARCH_BIN}/${TARGET_BIN}" "${ARGS[@]}"
+    echo "  ⚠ GCC not found in PATH"
 fi
-APPRUN_EOF
 
-chmod +x "AppRun.source"
-echo "✓ AppRun source created (Includes --name override)"
+if [[ -n "${LIBGCCJIT_PATH}" ]]; then
+    LIBGCCJIT_DIR=$(dirname "${LIBGCCJIT_PATH}")
+    echo "  Found libgccjit: ${LIBGCCJIT_PATH}"
+else
+    echo "  ⚠ libgccjit not found"
+fi
+echo "✓ Native-comp detection complete"
 echo ""
 
 ################################################################################
-# STEP 9: Icon Setup (AGGRESSIVE OVERRIDE)
+# STEP 7: Create AppRun (STANDARD)
 ################################################################################
-
-echo "Step 9: Setting up icon (AGGRESSIVE MODE)"
+echo "Step 7: Creating Standard AppRun"
 echo "───────────────────────────────────────────────────────────────────────"
 
+cat >"AppRun.source" <<EOF
+#!/bin/bash
+HERE="\$(dirname "\$(readlink -f "\${0}")")"
+EMACS_VER="${APP_VERSION}"
+
+# 1. Set up Emacs Paths
+export ARCH_LIBEXEC="\${HERE}/usr/libexec/emacs/\${EMACS_VER}/x86_64-pc-linux-gnu"
+export ARCH_BIN="\${HERE}/usr/bin"
+export EMACSPATH="\${ARCH_LIBEXEC}:\${ARCH_BIN}"
+export EMACSDIR="\${HERE}/usr/share/emacs"
+export EMACSDATA="\${HERE}/usr/share/emacs/\${EMACS_VER}/etc"
+export EMACSDOC="\${HERE}/usr/share/emacs/\${EMACS_VER}/etc"
+export EMACSLOADPATH="\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/emacs-lisp:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/progmodes:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/language:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/international:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/textmodes:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/vc:\${HERE}/usr/share/emacs/\${EMACS_VER}/lisp/net:\${HERE}/usr/share/emacs/site-lisp"
+export FONTCONFIG_PATH="\${HERE}/etc/fonts"
+export LIBFUSE_DISABLE_THREAD_SPAWNING=1
+
+# 2. Library Paths
+export LD_LIBRARY_PATH="\${HERE}/usr/lib:\${HERE}/usr/lib64:\${LD_LIBRARY_PATH:-}"
+export LIBRARY_PATH="/usr/lib:/usr/lib64:/usr/lib/gcc:/usr/lib/x86_64-linux-gnu:\${LIBRARY_PATH:-}"
+
+# 3. Standard PATH Handling (Prepend Emacs, Keep System Tools)
+# This allows your .zshenv configuration (mise/shims) to work correctly.
+export PATH="\${ARCH_BIN}:\${PATH}"
+
+# Detect binary to run
+BIN_NAME=\$(basename "\${ARGV0:-\$0}")
+TARGET_BIN="emacs"
+ARGS=("\$@")
+
+if [[ "\$BIN_NAME" == "emacsclient"* ]]; then
+    TARGET_BIN="emacsclient"
+fi
+
+if [[ "\${1:-}" =~ ^(emacsclient|ctags|etags)\$ ]]; then
+    TARGET_BIN="\$1"
+    ARGS=("\${@:2}")
+fi
+
+# Launch
+if [[ "\$TARGET_BIN" == "emacs" ]]; then
+    DUMP_FILE="\${ARCH_LIBEXEC}/emacs.pdmp"
+    if [[ -f "\$DUMP_FILE" ]]; then
+        exec "\${ARCH_BIN}/emacs" --name "emacs-appimage" --dump-file="\$DUMP_FILE" "\${ARGS[@]}"
+    else
+        exec "\${ARCH_BIN}/emacs" --name "emacs-appimage" "\${ARGS[@]}"
+    fi
+else
+    exec "\${ARCH_BIN}/\${TARGET_BIN}" "\${ARGS[@]}"
+fi
+EOF
+
+chmod +x "AppRun.source"
+echo "✓ AppRun created (Compatible with mise/system tools)"
+echo ""
+
+################################################################################
+# STEP 8: Icon Setup
+################################################################################
+echo "Step 8: Setting up icon"
+echo "───────────────────────────────────────────────────────────────────────"
 ICON_FOUND=0
 ICON_NAME="emacs-appimage.png"
 TEMP_ICON="$(pwd)/custom_icon_download.tmp"
 
-# 1. Download Custom Icon with AGGRESSIVE verification
 if [[ -n "${ICON_URL}" ]]; then
     echo "  Downloading custom icon from: ${ICON_URL}"
     if wget -q -O "${TEMP_ICON}" "${ICON_URL}"; then
-        # Verify it's actually an image
         if file "${TEMP_ICON}" | grep -qi "image"; then
-            echo "  ✓ Downloaded and verified image"
-
-            # Convert if needed
             if [[ "${ICON_URL}" == *.icns ]] && command -v magick &>/dev/null; then
                 magick "${TEMP_ICON}" "${APPDIR}/${ICON_NAME}" 2>/dev/null
                 rm "${TEMP_ICON}"
             else
-                # Force convert to PNG to normalize format
                 if command -v magick &>/dev/null; then
                     magick "${TEMP_ICON}" -resize "512x512>" "${APPDIR}/${ICON_NAME}"
                     rm "${TEMP_ICON}"
@@ -337,19 +295,16 @@ if [[ -n "${ICON_URL}" ]]; then
                 fi
             fi
             ICON_FOUND=1
-            echo "  ✓ Custom icon processed: ${APPDIR}/${ICON_NAME}"
+            echo "  ✓ Custom icon processed"
         else
-            echo "  ✗ Downloaded file is not a valid image!"
+            echo "  ✗ Invalid image file"
             rm "${TEMP_ICON}"
         fi
-    else
-        echo "  ✗ Failed to download custom icon"
     fi
 fi
 
-# 2. Fallback to Source
 if [[ $ICON_FOUND -eq 0 ]]; then
-    echo "  Using fallback Emacs icon from source..."
+    echo "  Using fallback Emacs icon..."
     declare -a ICON_PATHS=(
         "emacs-${APP_VERSION}/etc/images/icons/hicolor/128x128/apps/emacs.png"
         "emacs-${APP_VERSION}/etc/images/emacs.png"
@@ -363,9 +318,8 @@ if [[ $ICON_FOUND -eq 0 ]]; then
     done
 fi
 
-# 3. SVG Fallback
 if [[ $ICON_FOUND -eq 0 ]]; then
-    echo "  ⚠ No icon found! Creating fallback..."
+    echo "  ⚠ Creating generated icon..."
     cat >"${APPDIR}/emacs-appimage.svg" <<'EOF'
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <rect width="256" height="256" fill="#7f5ab6" rx="40" ry="40"/>
@@ -380,27 +334,16 @@ EOF
     fi
 fi
 
-# 4. THE NUCLEAR OPTION - Overwrite EVERYTHING
-echo "  NUCLEAR OPTION: Overwriting ALL internal icons..."
-
-# Verify we have an icon
+# Ensure icon file exists
 if [[ ! -f "${APPDIR}/${ICON_NAME}" ]]; then
-    echo "  ✗ CRITICAL: No icon file found at ${APPDIR}/${ICON_NAME}"
+    echo "  ✗ Critical: No icon file found."
     exit 1
 fi
 
-echo "  Using icon: ${APPDIR}/${ICON_NAME}"
-file "${APPDIR}/${ICON_NAME}"
-
-# A. Overwrite hicolor icon theme (ALL sizes)
+# Install icons to hicolor
 TARGET_ICON_DIR="${APPDIR}/usr/share/icons/hicolor"
-for size in 16x16 22x22 24x24 32x32 48x48 64x64 128x128 256x256 512x512 scalable; do
+for size in 16x16 22x22 24x24 32x32 48x48 64x64 128x128 256x256 512x512; do
     mkdir -p "${TARGET_ICON_DIR}/${size}/apps"
-    if [[ "$size" == "scalable" ]]; then
-        # For scalable, we need SVG or just skip
-        continue
-    fi
-    # Resize appropriately
     SIZE_NUM=$(echo "$size" | cut -d'x' -f1)
     if command -v magick &>/dev/null; then
         magick "${APPDIR}/${ICON_NAME}" -resize "${SIZE_NUM}x${SIZE_NUM}!" "${TARGET_ICON_DIR}/${size}/apps/emacs.png"
@@ -411,38 +354,21 @@ for size in 16x16 22x22 24x24 32x32 48x48 64x64 128x128 256x256 512x512 scalable
     fi
 done
 
-# B. Overwrite Emacs internal resource icon
-INTERNAL_IMG_DIR="${APPDIR}/usr/share/emacs/${APP_VERSION}/etc/images"
-mkdir -p "${INTERNAL_IMG_DIR}"
-mkdir -p "${INTERNAL_IMG_DIR}/icons"
-cp "${APPDIR}/${ICON_NAME}" "${INTERNAL_IMG_DIR}/emacs.png"
-cp "${APPDIR}/${ICON_NAME}" "${INTERNAL_IMG_DIR}/icons/emacs.png"
-
-# C. Put icon in pixmaps too
-mkdir -p "${APPDIR}/usr/share/pixmaps"
-cp "${APPDIR}/${ICON_NAME}" "${APPDIR}/usr/share/pixmaps/emacs.png"
-cp "${APPDIR}/${ICON_NAME}" "${APPDIR}/usr/share/pixmaps/emacs-appimage.png"
-
-# D. DELETE any conflicting icons
-find "${APPDIR}/usr/share" -type f \( -name "*emacs*.svg" -o -name "*emacs*.xpm" \) -delete 2>/dev/null || true
-
-echo "✓ Icon nuclear override complete (${ICON_NAME})"
+echo "✓ Icon setup complete"
 echo ""
 
 ################################################################################
-# STEP 10: Desktop Entry
+# STEP 9: Desktop Entry
 ################################################################################
-
-echo "Step 10: Creating desktop entry"
+echo "Step 9: Creating desktop entry"
 echo "───────────────────────────────────────────────────────────────────────"
-
 cat >"${APPDIR}/emacs.desktop" <<EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=Emacs
 Comment=GNU Emacs text editor and IDE
-Exec=env WEBKIT_DISABLE_COMPOSITING_MODE=1 emacs %F
+Exec=env WEBKIT_DISABLE_DMABUF_RENDERER=1 emacs %F
 Icon=emacs-appimage
 StartupWMClass=emacs-appimage
 StartupNotify=true
@@ -455,10 +381,9 @@ echo "✓ Desktop entry created"
 echo ""
 
 ################################################################################
-# STEP 11: Prepare AppDir for LinuxDeploy
+# STEP 10: Prepare AppDir for LinuxDeploy
 ################################################################################
-
-echo "Step 11: Preparing AppDir"
+echo "Step 10: Preparing AppDir"
 echo "───────────────────────────────────────────────────────────────────────"
 cp "${APPDIR}/emacs.desktop" "${APPDIR}/" 2>/dev/null || true
 cp "${APPDIR}/${ICON_NAME}" "${APPDIR}/" 2>/dev/null || true
@@ -466,13 +391,10 @@ echo "✓ AppDir ready for deployment"
 echo ""
 
 ################################################################################
-# STEP 12: Download & Extract Build Tools (FUSE-Safe)
+# STEP 11: Download & Extract Build Tools
 ################################################################################
-
-echo "Step 12: Preparing Build Tools"
+echo "Step 11: Preparing Build Tools"
 echo "───────────────────────────────────────────────────────────────────────"
-
-# 1. LinuxDeploy
 if [[ ! -d "linuxdeploy-build" ]]; then
     echo "  Downloading linuxdeploy..."
     wget -q -O linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
@@ -482,7 +404,6 @@ if [[ ! -d "linuxdeploy-build" ]]; then
     rm linuxdeploy
 fi
 
-# 2. AppImageTool
 if [[ ! -d "appimagetool-build" ]]; then
     echo "  Downloading appimagetool..."
     wget -q -O appimagetool "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
@@ -493,16 +414,14 @@ if [[ ! -d "appimagetool-build" ]]; then
 fi
 
 export PATH="$(pwd)/linuxdeploy-build/usr/bin:$(pwd)/appimagetool-build/usr/bin:${PATH}"
-echo "✓ Tools extracted and ready"
+echo "✓ Tools ready"
 echo ""
 
 ################################################################################
-# STEP 13: Create AppImage (via Extracted LinuxDeploy)
+# STEP 12: Create AppImage
 ################################################################################
-
-echo "Step 13: Bundling and Creating AppImage"
+echo "Step 12: Bundling and Creating AppImage"
 echo "───────────────────────────────────────────────────────────────────────"
-
 export VERSION="${APP_VERSION}"
 export NO_STRIP=1
 
@@ -524,7 +443,6 @@ export NO_STRIP=1
     --output appimage
 
 GENERATED_NAME="Emacs-${APP_VERSION}-x86_64.AppImage"
-
 if [[ -f "${GENERATED_NAME}" ]]; then
     mv "${GENERATED_NAME}" "${OUTPUT}"
 elif [[ -f "Emacs-x86_64.AppImage" ]]; then
@@ -539,32 +457,27 @@ else
     fi
 fi
 
-# CRITICAL: Set proper permissions from the start
 chown "${TARGET_UID}:${TARGET_GID}" "${OUTPUT}" 2>/dev/null || true
 chmod 755 "${OUTPUT}"
-
 echo "✓ AppImage created: ${OUTPUT}"
 echo "  Permissions: $(stat -c '%a %U:%G' "${OUTPUT}" 2>/dev/null || stat -f '%p %Su:%Sg' "${OUTPUT}")"
 echo ""
 
 ################################################################################
-# STEP 14: Cleanup
+# STEP 13: Cleanup
 ################################################################################
-
-echo "Step 14: Cleanup"
+echo "Step 13: Cleanup"
 echo "───────────────────────────────────────────────────────────────────────"
 rm -rf "${APPDIR}" "emacs-${APP_VERSION}" "AppRun.source"
 echo "✓ Cleaned build files"
 echo ""
 
 ################################################################################
-# STEP 15: Test
+# STEP 14: Test
 ################################################################################
-
-echo "Step 15: Testing"
+echo "Step 14: Testing"
 echo "───────────────────────────────────────────────────────────────────────"
 export APPIMAGE_EXTRACT_AND_RUN=1
-
 "./${OUTPUT}" --version 2>&1 | head -2
 echo ""
 echo "Testing Emacs batch mode..."

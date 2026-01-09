@@ -21,27 +21,27 @@ USER_NAME=$(whoami)
 ICON_URL=""
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --icon | -i)
-            ICON_URL="$2"
-            shift 2
-            ;;
-        --version | -v)
-            APP_VERSION="$2"
-            OUTPUT="emacs-${APP_VERSION}-x86_64.AppImage"
-            shift 2
-            ;;
-        --output | -o)
-            OUTPUT="$2"
-            shift 2
-            ;;
-        --help | -h)
-            echo "Usage: $0 [--icon ICON_URL] [--version VERSION] [--output OUTPUT]"
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
+    --icon | -i)
+        ICON_URL="$2"
+        shift 2
+        ;;
+    --version | -v)
+        APP_VERSION="$2"
+        OUTPUT="emacs-${APP_VERSION}-x86_64.AppImage"
+        shift 2
+        ;;
+    --output | -o)
+        OUTPUT="$2"
+        shift 2
+        ;;
+    --help | -h)
+        echo "Usage: $0 [--icon ICON_URL] [--version VERSION] [--output OUTPUT]"
+        exit 0
+        ;;
+    *)
+        echo "Unknown option: $1"
+        exit 1
+        ;;
     esac
 done
 
@@ -61,8 +61,8 @@ fi
 # Build the command string to run inside the container.
 # KEY FIX: Pass USER_ID and GROUP_ID to the build script AND fix permissions at the end
 CMD_STRING="pacman -Syu --noconfirm base-devel sudo wget file && \
-chmod +x build-emacs-appimage.sh && \
-./build-emacs-appimage.sh --uid ${USER_ID} --gid ${GROUP_ID} ${INNER_ARGS} && \
+chmod +x emacs-appimage-build.sh && \
+./emacs-appimage-build.sh --uid ${USER_ID} --gid ${GROUP_ID} ${INNER_ARGS} && \
 echo '=== FIXING FINAL PERMISSIONS ===' && \
 chown ${USER_ID}:${GROUP_ID} ${OUTPUT} 2>/dev/null || true && \
 chmod 755 ${OUTPUT} && \
@@ -78,13 +78,13 @@ echo "════════════════════════�
 
 # Execute the Docker command
 docker run -it --rm \
-       --device /dev/fuse \
-       --cap-add SYS_ADMIN \
-       --security-opt apparmor:unconfined \
-       -v "${SCRIPT_DIR}:${BUILD_DIR}" \
-       -w "${BUILD_DIR}" \
-       archlinux \
-       /bin/bash -c "${CMD_STRING}"
+    --device /dev/fuse \
+    --cap-add SYS_ADMIN \
+    --security-opt apparmor:unconfined \
+    -v "${SCRIPT_DIR}:${BUILD_DIR}" \
+    -w "${BUILD_DIR}" \
+    archlinux \
+    /bin/bash -c "${CMD_STRING}"
 
 TARGET_FILE="${SCRIPT_DIR}/${OUTPUT}"
 

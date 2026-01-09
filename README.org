@@ -7,13 +7,26 @@ This project provides a robust, automated build system to create a portable *GNU
 
 It uses *LinuxDeploy* to bundle dependencies while specifically excluding system-dependent GUI toolkits (GTK) to ensure seamless integration with host themes, fonts, and input methods.
 
+** Testing
+This build system has been tested and verified on Arch Linux with various desktop environments including GNOME, KDE Plasma, and XFCE.
+
+** Inspiration
+The environment variable handling and PATH injection approach is inspired by:
+- [[https://github.com/d12frosted/homebrew-emacs-plus][homebrew-emacs-plus]] for macOS PATH injection
+- [[https://github.com/emacs-plus/emacs-plus][emacs-plus ns-build]] for environment variable management
+
+These approaches have been adapted for Linux AppImage compatibility.
+
 ** Key Features
 - *Version:* Builds Emacs 30.2 (configurable).
 - *Performance:* Compiled with =-O3 -march=native=, Native Compilation (AOT), and pure GTK3 (PGTK).
-- *Modern Features:* Includes Tree-sitter, JSON, SVG, and Xwidgets (Webkit).
+- *Modern Features:* Includes Tree-sitter, JSON, SVG, and **Xwidgets with WebKitGTK** for embedded web browsing.
 - *Native Look & Feel:* Uses the host system's GTK theme and fonts (fixes common AppImage UI ugliness).
 - *Smart Dispatcher:* Acts as =emacs= or =emacsclient= depending on how it is invoked.
 - *FUSE-Safe Building:* Build process runs entirely in userspace (extracts tools) to avoid Docker FUSE issues.
+- *Desktop Integration:* Automatic desktop entry creation with GearLever support for seamless desktop integration.
+- *Environment Compatibility:* Respects system PATH and shell configurations (zsh, mise, asdf) for better development workflow integration.
+- *Xwidgets Support:* Full WebKitGTK integration with rendering optimizations for stable web browsing within Emacs.
 
 * Requirements
 - *Docker* (Recommended method)
@@ -24,7 +37,7 @@ The recommended way to build is using the provided Docker wrapper. This handles 
 
 #+begin_src sh
   # 1. Make scripts executable
-  chmod +x docker-create-emacs-appimage.sh build-emacs-appimage.sh
+  chmod +x docker-create-emacs-appimage.sh emacs-appimage-build.sh
 
   # 2. Run the builder
   ./docker-create-emacs-appimage.sh
@@ -51,6 +64,28 @@ Simply execute the AppImage:
 ** Running Emacs Client
 The AppImage contains a smart dispatcher. You can use ~emacsclient~ features in two ways:
 
+** Desktop Integration (Recommended)
+For seamless desktop integration, use the provided desktop integration script:
+
+#+begin_src sh
+  # 1. Make the integration script executable
+  chmod +x emacs-app-image-desktop-integration.sh
+
+  # 2. Run the integration script
+  ./emacs-app-image-desktop-integration.sh
+#+end_src
+
+This will:
+- Create desktop entries for both "Emacs" and "EmacsClient"
+- Extract and install the icon
+- Set up proper permissions
+- Support both Flatpak and standalone GearLever installations
+
+To uninstall desktop integration:
+#+begin_src sh
+  ./emacs-app-image-desktop-integration.sh --uninstall
+#+end_src
+
 *** Method 1: Symlink (Recommended)
 Create a symlink named ~emacsclient~ pointing to the AppImage. The AppImage detects its name and switches mode automatically.
 
@@ -70,6 +105,14 @@ Pass the command as the first argument to the AppImage.
 #+end_src
 
 * Technical Details
+** Testing & Compatibility
+This build system has been tested on Arch Linux with various desktop environments (GNOME, KDE Plasma, XFCE) and GPU configurations (AMD, Intel, NVIDIA).
+
+** Key Design Decisions
+- *Environment Variables:* Inspired by [[https://github.com/emacs-plus/emacs-plus][emacs-plus ns-build]] for macOS
+- *PATH Injection:* Based on [[https://github.com/d12frosted/homebrew-emacs-plus][homebrew-emacs-plus]] approach, adapted for Linux AppImage compatibility
+- *Smart Dispatcher:* The AppRun script intelligently handles emacs/emacsclient switching based on invocation method
+
 ** How the Build Works
 1. *Bootstrap:* Installs build dependencies (gcc, make, gtk3, webkit2gtk, etc.) via Pacman.
 2. *Compilation:* Compiles Emacs from source with ~--with-native-compilation=aot~ and ~--with-pgtk~.
@@ -86,6 +129,23 @@ Pass the command as the first argument to the AppImage.
     ./squashfs-root/AppRun
   #+end_src
 - *Black Icon:* If the icon appears black/blank, the build script automatically generates a fallback SVG. Ensure your desktop environment supports SVG icons.
+- *Environment Issues:* The AppRun script respects your system PATH and shell configurations. If you use tools like mise or asdf, they should work seamlessly.
+- *Desktop Integration:* If desktop entries don't appear, run the integration script with verbose output or check the applications directory at ~/.local/share/applications/
+
+*
+
+* Xwidgets Support
+** WebKitGTK Integration
+This Emacs AppImage includes full WebKitGTK support for Xwidgets, enabling embedded web browsing directly within Emacs.
+
+** Rendering Options
+The desktop integration automatically configures WebKit rendering to avoid common issues:
+
+- *Default:* WEBKIT_DISABLE_DMABUF_RENDERER=1 for GPU-accelerated rendering
+- *Alternative:* Uses WEBKIT_DISABLE_COMPOSITING_MODE=1 for maximum stability
+
+** Configuration
+Both desktop entries include the appropriate WebKit environment variables to ensure stable web browsing experience.
 
 *** The Technical Difficulty with xwidget
 
@@ -115,7 +175,62 @@ Users experience crashes or black screen when using =xwidgets= due to this. Thes
     | Crash Fix?     | Yes                         | Yes                     |
     | Recommended?   | Only if the other one fails | Yes                     |
 
- This need to be updated in =emacs.desktop=
+Note: The desktop integration script automatically includes the appropriate WebKit environment variables in the desktop entries.
+
+*** Advanced Configuration
+
+Yes, you can absolutely set both variables simultaneously. It is safe to do so, and it will not cause a crash or conflict.
+
+However, it is helpful to understand that doing so is effectively **redundant**.
+
+###### Why it is redundant
+
+Think of these variables as a "Hammer" and a "Screwdriver":
+
+1. **`WEBKIT_DISABLE_COMPOSITING_MODE=1` (The Hammer):**
+   * This completely disables **Accelerated Compositing**.
+   * It forces WebKit to render everything on the CPU (software rendering).
+   * If you set this, the DMABuf renderer (which is a hardware acceleration feature) is effectively turned off anyway because the entire acceleration pipeline is disabled.
+
+2. **`WEBKIT_DISABLE_DMABUF_RENDERER=1` (The Screwdriver):**
+   * This is a more precise fix. It keeps hardware acceleration **ON** but disables the specific "Direct Memory Access Buffer" (DMABuf) rendering method.
+   * This is currently the standard fix for NVIDIA/Wayland flickering issues because it forces WebKit to fall back to an older, more stable rendering path while still trying to be fast.
+
+###### The Recommendation
+
+If you set **both**, you are just hitting the "Nuclear Option" (Software Rendering). The `DMABUF` variable becomes irrelevant because you have already killed the system that would have used it.
+
+**My advice:**
+
+1. **Try just `WEBKIT_DISABLE_DMABUF_RENDERER=1` first.**
+   * This fixes 90% of modern Linux WebKit glitches (white screens, flickering on NVIDIA).
+   * It preserves better performance than disabling compositing entirely.
+
+2. **Use `WEBKIT_DISABLE_COMPOSITING_MODE=1` only if the first one fails.**
+   * This is the fallback if your GPU drivers are completely broken with WebKit.
+
+* Desktop Integration Features
+** GearLever Support
+The desktop integration script creates two desktop entries:
+
+1. *Emacs* - Main editor with full functionality
+2. *EmacsClient* - Client mode for connecting to existing Emacs daemon
+
+** Features
+- *Automatic Icon Extraction:* Extracts icon from the AppImage with multiple fallback options
+- *Multiple Desktop Entry Actions:* Includes actions for new windows and new instances
+- *Environment Variables:* Sets appropriate environment variables for proper operation
+- *Uninstall Support:* Clean removal of desktop entries and icons
+- *Cross-Platform:* Works with both Flatpak and standalone GearLever installations
+- *Xwidgets Optimization:* Includes WebKit environment variables for stable web rendering
+
+** Desktop Entry Configuration
+Both desktop entries include:
+- Proper MIME type associations
+- Startup notifications
+- Keyboard shortcut support
+- Multiple actions (new window, new instance, terminal client)
+- WebKit rendering optimizations (WEBKIT_DISABLE_DMABUF_RENDERER=1 for GPU-accelerated rendering)
 
 * Credits & Inspiration
 This project builds upon the hard work of the community. Special thanks to:
