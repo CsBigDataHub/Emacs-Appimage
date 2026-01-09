@@ -7,30 +7,33 @@ This project provides a robust, automated build system to create a portable *GNU
 
 It uses *LinuxDeploy* to bundle dependencies while specifically excluding system-dependent GUI toolkits (GTK) to ensure seamless integration with host themes, fonts, and input methods.
 
-** Testing
-This build system has been tested and verified on Arch Linux with various desktop environments including GNOME, KDE Plasma, and XFCE.
+** Testing & Compatibility
+This build system has been tested and verified on Arch Linux with various desktop environments including GNOME, KDE Plasma, and XFCE. It supports multiple GPU configurations (AMD, Intel, NVIDIA) and works with both X11 and Wayland sessions.
 
-** Inspiration
+** Inspiration & Design Philosophy
 The environment variable handling and PATH injection approach is inspired by:
 - [[https://github.com/d12frosted/homebrew-emacs-plus][homebrew-emacs-plus]] for macOS PATH injection
 - [[https://github.com/emacs-plus/emacs-plus][emacs-plus ns-build]] for environment variable management
 
-These approaches have been adapted for Linux AppImage compatibility.
+These approaches have been adapted for Linux AppImage compatibility with a focus on:
+- *Respecting user environment:* Preserves system PATH and shell configurations (zsh, mise, asdf)
+- *Clean integration:* No forced PATH injection that could conflict with user tools
+- *Smart dispatching:* Intelligent handling of emacs/emacsclient based on invocation method
 
 ** Key Features
-- *Version:* Builds Emacs 30.2 (configurable).
-- *Performance:* Compiled with =-O3 -march=native=, Native Compilation (AOT), and pure GTK3 (PGTK).
-- *Modern Features:* Includes Tree-sitter, JSON, SVG, and **Xwidgets with WebKitGTK** for embedded web browsing.
-- *Native Look & Feel:* Uses the host system's GTK theme and fonts (fixes common AppImage UI ugliness).
-- *Smart Dispatcher:* Acts as =emacs= or =emacsclient= depending on how it is invoked.
-- *FUSE-Safe Building:* Build process runs entirely in userspace (extracts tools) to avoid Docker FUSE issues.
-- *Desktop Integration:* Automatic desktop entry creation with GearLever support for seamless desktop integration.
-- *Environment Compatibility:* Respects system PATH and shell configurations (zsh, mise, asdf) for better development workflow integration.
-- *Xwidgets Support:* Full WebKitGTK integration with rendering optimizations for stable web browsing within Emacs.
+- *Version:* Builds Emacs 30.2 (configurable)
+- *Performance:* Compiled with =-O3 -march=native=, Native Compilation (AOT), and pure GTK3 (PGTK)
+- *Modern Features:* Includes Tree-sitter, JSON, SVG, and **Xwidgets with WebKitGTK** for embedded web browsing
+- *Native Look & Feel:* Uses the host system's GTK theme and fonts (fixes common AppImage UI ugliness)
+- *Smart Dispatcher:* Acts as =emacs= or =emacsclient= depending on how it is invoked
+- *FUSE-Safe Building:* Build process runs entirely in userspace (extracts tools) to avoid Docker FUSE issues
+- *Desktop Integration:* Automatic desktop entry creation with GearLever support for seamless desktop integration
+- *Environment Compatibility:* Respects system PATH and shell configurations for better development workflow integration
+- *Xwidgets Support:* Full WebKitGTK integration with rendering optimizations for stable web browsing within Emacs
 
 * Requirements
 - *Docker* (Recommended method)
-- *OR* An Arch Linux system with =base-devel= installed.
+- *OR* An Arch Linux system with =base-devel= installed
 
 * Building (The Easy Way)
 The recommended way to build is using the provided Docker wrapper. This handles all dependencies and FUSE permissions automatically.
@@ -55,38 +58,20 @@ You can pass arguments to the Docker wrapper:
 #+end_src
 
 * Usage
-** Running Emacs
-Simply execute the AppImage:
+
+** Running Emacs Directly
+The simplest way to run Emacs is to execute the AppImage directly:
+
 #+begin_src sh
   ./emacs-30.2-x86_64.AppImage
 #+end_src
 
-** Running Emacs Client
-The AppImage contains a smart dispatcher. You can use ~emacsclient~ features in two ways:
+This will launch the Emacs GUI with all bundled dependencies.
 
-** Desktop Integration (Recommended)
-For seamless desktop integration, use the provided desktop integration script:
+** Running Emacs Client (emacsclient)
+The AppImage contains a smart dispatcher that can act as either =emacs= or =emacsclient= depending on how it is invoked. Here are the recommended methods:
 
-#+begin_src sh
-  # 1. Make the integration script executable
-  chmod +x emacs-app-image-desktop-integration.sh
-
-  # 2. Run the integration script
-  ./emacs-app-image-desktop-integration.sh
-#+end_src
-
-This will:
-- Create desktop entries for both "Emacs" and "EmacsClient"
-- Extract and install the icon
-- Set up proper permissions
-- Support both Flatpak and standalone GearLever installations
-
-To uninstall desktop integration:
-#+begin_src sh
-  ./emacs-app-image-desktop-integration.sh --uninstall
-#+end_src
-
-*** Method 1: Symlink (Recommended)
+*** Method 1: Symlink (Recommended for Daily Use)
 Create a symlink named ~emacsclient~ pointing to the AppImage. The AppImage detects its name and switches mode automatically.
 
 #+begin_src sh
@@ -104,112 +89,189 @@ Pass the command as the first argument to the AppImage.
   ./emacs-30.2-x86_64.AppImage emacsclient -c -a ""
 #+end_src
 
-* Technical Details
-** Testing & Compatibility
-This build system has been tested on Arch Linux with various desktop environments (GNOME, KDE Plasma, XFCE) and GPU configurations (AMD, Intel, NVIDIA).
+*** Method 3: Environment Variable
+Set the =ARGV0= environment variable to control the mode.
 
-** Key Design Decisions
-- *Environment Variables:* Inspired by [[https://github.com/emacs-plus/emacs-plus][emacs-plus ns-build]] for macOS
-- *PATH Injection:* Based on [[https://github.com/d12frosted/homebrew-emacs-plus][homebrew-emacs-plus]] approach, adapted for Linux AppImage compatibility
-- *Smart Dispatcher:* The AppRun script intelligently handles emacs/emacsclient switching based on invocation method
+#+begin_src sh
+  ARGV0=emacsclient ./emacs-30.2-x86_64.AppImage -c -a ""
+#+end_src
+
+** Desktop Integration (Recommended)
+For seamless desktop integration, use the provided desktop integration script:
+
+#+begin_src sh
+  # 1. Make the integration script executable
+  chmod +x emacs-app-image-desktop-integration.sh
+
+  # 2. Run the integration script
+  ./emacs-app-image-desktop-integration.sh
+#+end_src
+
+This will:
+- Create desktop entries for both "Emacs" and "EmacsClient"
+- Extract and install the icon
+- Set up proper permissions
+- Support both Flatpak and standalone GearLever installations
+- Configure WebKit environment variables for stable Xwidget rendering
+
+To uninstall desktop integration:
+#+begin_src sh
+  ./emacs-app-image-desktop-integration.sh --uninstall
+#+end_src
+
+** Advanced Usage
+
+*** Starting Emacs Daemon
+To use the client-server model, first start the Emacs daemon:
+
+#+begin_src sh
+  ./emacs-30.2-x86_64.AppImage --daemon
+#+end_src
+
+Then connect using emacsclient:
+
+#+begin_src sh
+  ./emacsclient -c -a ""
+#+end_src
+
+*** Using with System Tools
+The AppRun script respects your system PATH and shell configurations. If you use tools like mise, asdf, or nvm, they should work seamlessly:
+
+#+begin_src sh
+  # Your system tools remain accessible
+  ./emacs-30.2-x86_64.AppImage --version
+  # Or with emacsclient
+  ./emacsclient -e "(message "Hello World")"
+#+end_src
+
+*** Batch Mode Operations
+You can use the AppImage for batch processing:
+
+#+begin_src sh
+  ./emacs-30.2-x86_64.AppImage -Q -batch -f batch-byte-compile file.el
+  ./emacs-30.2-x86_64.AppImage -Q -batch -l init.el -f some-function
+#+end_src
+
+* Technical Details
 
 ** How the Build Works
-1. *Bootstrap:* Installs build dependencies (gcc, make, gtk3, webkit2gtk, etc.) via Pacman.
-2. *Compilation:* Compiles Emacs from source with ~--with-native-compilation=aot~ and ~--with-pgtk~.
-3. *Preparation:* Moves the ~emacs.pdmp~ (portable dumper) file to the correct architecture-specific directory.
+1. *Bootstrap:* Installs build dependencies (gcc, make, gtk3, webkit2gtk, etc.) via Pacman
+2. *Compilation:* Compiles Emacs from source with ~--with-native-compilation=aot~ and ~--with-pgtk~
+3. *Preparation:* Moves the ~emacs.pdmp~ (portable dumper) file to the correct architecture-specific directory
 4. *Bundling:*
-   - Uses *LinuxDeploy* to crawl the binary and bundle required shared libraries (libpng, librsvg, libxml2, etc.).
-   - *Excludes* GTK/GDK/GLib libraries via ~--exclude-library~. This strategy avoids the "Frankenstein" library issue where bundled GTK libs cannot find host system schemas, ensuring native UI integration.
-5. *AppRun:* Injects a custom ~AppRun~ script that sets up environment variables (~EMACSLOADPATH~, ~EMACSDATA~) and handles the ~emacsclient~ dispatching.
+   - Uses *LinuxDeploy* to crawl the binary and bundle required shared libraries (libpng, librsvg, libxml2, etc.)
+   - *Excludes* GTK/GDK/GLib libraries via ~--exclude-library~. This strategy avoids the "Frankenstein" library issue where bundled GTK libs cannot find host system schemas, ensuring native UI integration
+5. *AppRun:* Injects a custom ~AppRun~ script that:
+   - Sets up environment variables (~EMACSLOADPATH~, ~EMACSDATA~)
+   - Handles the ~emacsclient~ dispatching based on invocation method
+   - Preserves user PATH and environment configurations
 
-** Troubleshooting
-- *FUSE Errors:* If running on a system without FUSE, you can run the AppImage by extracting it:
-  #+begin_src sh
-    ./emacs-30.2-x86_64.AppImage --appimage-extract
-    ./squashfs-root/AppRun
-  #+end_src
-- *Black Icon:* If the icon appears black/blank, the build script automatically generates a fallback SVG. Ensure your desktop environment supports SVG icons.
-- *Environment Issues:* The AppRun script respects your system PATH and shell configurations. If you use tools like mise or asdf, they should work seamlessly.
-- *Desktop Integration:* If desktop entries don't appear, run the integration script with verbose output or check the applications directory at ~/.local/share/applications/
+** Smart Dispatcher Mechanism
+The AppRun script implements an intelligent dispatcher that determines which binary to execute based on:
 
-*
+1. *Binary name:* If the symlink is named ~emacsclient~, it runs emacsclient
+2. *First argument:* If the first argument is ~emacsclient~, ~ctags~, or ~etags~, it runs that command
+3. *ARGV0 environment variable:* Can be set to override the detected binary name
+
+This allows flexible usage patterns while maintaining compatibility with existing workflows.
+
+** Environment Variable Handling
+The AppRun script carefully manages environment variables to:
+
+- *Prepend* Emacs binaries to PATH (so emacsclient works)
+- *Preserve* user's original PATH (so system tools remain accessible)
+- *Set* Emacs-specific variables (EMACSLOADPATH, EMACSDATA, etc.)
+- *Respect* user shell configurations (zsh, bash, fish)
+
+This approach prevents conflicts with user-installed tools while ensuring Emacs functionality.
+
+* Troubleshooting
+
+** FUSE Errors
+If running on a system without FUSE, you can run the AppImage by extracting it:
+
+#+begin_src sh
+  ./emacs-30.2-x86_64.AppImage --appimage-extract
+  ./squashfs-root/AppRun
+#+end_src
+
+** Black Icon
+If the icon appears black/blank, the build script automatically generates a fallback SVG. Ensure your desktop environment supports SVG icons.
+
+** Environment Issues
+The AppRun script respects your system PATH and shell configurations. If you use tools like mise or asdf, they should work seamlessly. If you encounter issues:
+
+1. Check that your shell configuration files are being sourced
+2. Verify that required tools are in your PATH
+3. Try running with a clean environment to isolate the issue
+
+** Desktop Integration
+If desktop entries don't appear:
+- Run the integration script with verbose output
+- Check the applications directory at ~/.local/share/applications/
+- Verify that you have write permissions to the applications directory
+
+** Xwidget Issues
+If you experience crashes or black screens with Xwidgets, see the Xwidgets Support section below.
 
 * Xwidgets Support
+
 ** WebKitGTK Integration
-This Emacs AppImage includes full WebKitGTK support for Xwidgets, enabling embedded web browsing directly within Emacs.
+This Emacs AppImage includes full WebKitGTK support for Xwidgets, enabling embedded web browsing directly within Emacs. The integration is optimized for stability and performance.
 
 ** Rendering Options
 The desktop integration automatically configures WebKit rendering to avoid common issues:
 
 - *Default:* WEBKIT_DISABLE_DMABUF_RENDERER=1 for GPU-accelerated rendering
-- *Alternative:* Uses WEBKIT_DISABLE_COMPOSITING_MODE=1 for maximum stability
+- *Alternative:* WEBKIT_DISABLE_COMPOSITING_MODE=1 for maximum stability
 
 ** Configuration
-Both desktop entries include the appropriate WebKit environment variables to ensure stable web browsing experience.
 
-*** The Technical Difficulty with xwidget
+The desktop integration automatically configures WebKit for stable Xwidget rendering. You can also set these environment variables manually:
 
-=WebKitGTK= (used by Emacs xwidgets for web rendering) is attempting to initialize hardware-accelerated OpenGL rendering, but your current Wayland/GDK backend cannot provide a valid GL context.
-Users experience crashes or black screen when using =xwidgets= due to this. These are 2 options to fix that -
+#+begin_src sh
+  # For GPU-accelerated rendering (recommended)
+  export WEBKIT_DISABLE_DMABUF_RENDERER=1
 
-1. =WEBKIT_DISABLE_COMPOSITING_MODE=1= (The "Nuclear" Option)
+  # For maximum stability (fallback)
+  export WEBKIT_DISABLE_COMPOSITING_MODE=1
+#+end_src
 
-    What happens: The browser stops using the GPU completely. The CPU has to calculate every pixel of the website, draw it, and then hand it to Emacs.
+*** WebKit Rendering Options
 
-    Result: High stability, but Slow.
+WebKitGTK rendering can fail on Linux due to GPU driver issues, particularly with Wayland/NVIDIA combinations. Here are your options:
 
-    Feel: Scrolling large pages might feel sluggish, and watching videos inside Emacs will consume 100% of a CPU core.
+| Feature        | DISABLE_COMPOSITING_MODE    | DISABLE_DMABUF_RENDERER |
+|----------------+-----------------------------+-------------------------|
+| Page Rendering | CPU (Slow)                  | GPU (Fast)              |
+| Video Playback | Choppy / High CPU usage     | Smooth                  |
+| Crash Fix?     | Yes                         | Yes                     |
+| Recommended?   | Only if the other one fails | Yes                     |
 
-2. =WEBKIT_DISABLE_DMABUF_RENDERER=1= (The "Surgical" Option)
+**Option 1: WEBKIT_DISABLE_DMABUF_RENDERER=1 (Recommended)**
+- Keeps GPU acceleration enabled
+- Disables only the problematic DMABuf rendering path
+- Fixes 90% of Linux WebKit issues (NVIDIA flickering, Wayland crashes)
+- Minimal performance impact
 
-    What happens: The browser still uses your AMD GPU to render the website quickly.
+**Option 2: WEBKIT_DISABLE_COMPOSITING_MODE=1 (Fallback)**
+- Disables all GPU acceleration
+- Forces CPU-based software rendering
+- Use only if DMABuf renderer option fails
+- Significant performance impact on video and complex pages
 
-    The Change: Normally, the browser tries to hand that finished image directly to Emacs via a fast hardware shortcut (DMABuf). This shortcut is what is crashing. By setting this flag, you force the browser to take a slightly slower route (copying the image to system memory first) to hand it over to Emacs.
+*** Advanced: Setting Both Variables
 
-    Result: Fast. The GPU still does the hard work; the only "slow" part is the hand-off, which is negligible on modern AMD cards.
+You can set both variables simultaneously - it's safe and won't cause conflicts. However, this is redundant:
 
-    | Feature        | DISABLE_COMPOSITING_MODE    | DISABLE_DMABUF_RENDERER |
-    |----------------+-----------------------------+-------------------------|
-    | Page Rendering | CPU (Slow)                  | GPU (Fast)              |
-    | Video Playback | Choppy / High CPU usage     | Smooth                  |
-    | Crash Fix?     | Yes                         | Yes                     |
-    | Recommended?   | Only if the other one fails | Yes                     |
+- Setting WEBKIT_DISABLE_COMPOSITING_MODE=1 already disables the DMABuf renderer
+- The DMABUF variable becomes irrelevant when compositing is disabled
+- You're effectively using the "Nuclear Option" (CPU rendering)
 
-Note: The desktop integration script automatically includes the appropriate WebKit environment variables in the desktop entries.
-
-*** Advanced Configuration
-
-Yes, you can absolutely set both variables simultaneously. It is safe to do so, and it will not cause a crash or conflict.
-
-However, it is helpful to understand that doing so is effectively **redundant**.
-
-###### Why it is redundant
-
-Think of these variables as a "Hammer" and a "Screwdriver":
-
-1. **`WEBKIT_DISABLE_COMPOSITING_MODE=1` (The Hammer):**
-   * This completely disables **Accelerated Compositing**.
-   * It forces WebKit to render everything on the CPU (software rendering).
-   * If you set this, the DMABuf renderer (which is a hardware acceleration feature) is effectively turned off anyway because the entire acceleration pipeline is disabled.
-
-2. **`WEBKIT_DISABLE_DMABUF_RENDERER=1` (The Screwdriver):**
-   * This is a more precise fix. It keeps hardware acceleration **ON** but disables the specific "Direct Memory Access Buffer" (DMABuf) rendering method.
-   * This is currently the standard fix for NVIDIA/Wayland flickering issues because it forces WebKit to fall back to an older, more stable rendering path while still trying to be fast.
-
-###### The Recommendation
-
-If you set **both**, you are just hitting the "Nuclear Option" (Software Rendering). The `DMABUF` variable becomes irrelevant because you have already killed the system that would have used it.
-
-**My advice:**
-
-1. **Try just `WEBKIT_DISABLE_DMABUF_RENDERER=1` first.**
-   * This fixes 90% of modern Linux WebKit glitches (white screens, flickering on NVIDIA).
-   * It preserves better performance than disabling compositing entirely.
-
-2. **Use `WEBKIT_DISABLE_COMPOSITING_MODE=1` only if the first one fails.**
-   * This is the fallback if your GPU drivers are completely broken with WebKit.
+**Best Practice:** Try WEBKIT_DISABLE_DMABUF_RENDERER=1 first. Use WEBKIT_DISABLE_COMPOSITING_MODE=1 only if that fails.
 
 * Desktop Integration Features
+
 ** GearLever Support
 The desktop integration script creates two desktop entries:
 
@@ -233,7 +295,9 @@ Both desktop entries include:
 - WebKit rendering optimizations (WEBKIT_DISABLE_DMABUF_RENDERER=1 for GPU-accelerated rendering)
 
 * Credits & Inspiration
+
 This project builds upon the hard work of the community. Special thanks to:
 
-- [[https://github.com/blahgeek/emacs-appimage/][blahgeek/emacs-appimage]]: For the inspiration on Docker-based Arch build workflows.
-- [[https://github.com/probonopd/Emacs.AppImage][probonopd/Emacs.AppImage]]: For pioneering the Emacs AppImage concepts and tooling.
+- [[https://github.com/blahgeek/emacs-appimage/][blahgeek/emacs-appimage]]: For the inspiration on Docker-based Arch build workflows
+- [[https://github.com/probonopd/Emacs.AppImage][probonopd/Emacs.AppImage]]: For pioneering the Emacs AppImage concepts and tooling
+- [[https://github.com/d12frosted/homebrew-emacs-plus][homebrew-emacs-plus]]: For the PATH injection approach inspiration
