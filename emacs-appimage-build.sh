@@ -368,7 +368,7 @@ Version=1.0
 Type=Application
 Name=Emacs
 Comment=GNU Emacs text editor and IDE
-Exec=env WEBKIT_DISABLE_COMPOSITING_MODE=1 emacs %F
+Exec=env WEBKIT_DISABLE_DMABUF_RENDERER=1 emacs %F
 Icon=emacs-appimage
 StartupWMClass=emacs-appimage
 StartupNotify=true
