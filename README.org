@@ -13,7 +13,6 @@ This build system has been tested and verified on Arch Linux with various deskto
 ** Inspiration & Design Philosophy
 The environment variable handling and PATH injection approach is inspired by:
 - [[https://github.com/d12frosted/homebrew-emacs-plus][homebrew-emacs-plus]] for macOS PATH injection
-- [[https://github.com/emacs-plus/emacs-plus][emacs-plus ns-build]] for environment variable management
 
 These approaches have been adapted for Linux AppImage compatibility with a focus on:
 - *Respecting user environment:* Preserves system PATH and shell configurations (zsh, mise, asdf)
