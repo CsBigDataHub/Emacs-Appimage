@@ -7,6 +7,16 @@ This project provides a robust, automated build system to create a portable *GNU
 
 It uses *LinuxDeploy* to bundle dependencies while specifically excluding system-dependent GUI toolkits (GTK) to ensure seamless integration with host themes, fonts, and input methods.
 
+** Testing
+This build system has been tested and verified on Arch Linux with various desktop environments including GNOME, KDE Plasma, and XFCE.
+
+** Inspiration
+The environment variable handling and PATH injection approach is inspired by:
+- [[https://github.com/d12frosted/homebrew-emacs-plus][homebrew-emacs-plus]] for macOS PATH injection
+- [[https://github.com/emacs-plus/emacs-plus][emacs-plus ns-build]] for environment variable management
+
+These approaches have been adapted for Linux AppImage compatibility.
+
 ** Key Features
 - *Version:* Builds Emacs 30.2 (configurable).
 - *Performance:* Compiled with =-O3 -march=native=, Native Compilation (AOT), and pure GTK3 (PGTK).
@@ -95,6 +105,14 @@ Pass the command as the first argument to the AppImage.
 #+end_src
 
 * Technical Details
+** Testing & Compatibility
+This build system has been tested on Arch Linux with various desktop environments (GNOME, KDE Plasma, XFCE) and GPU configurations (AMD, Intel, NVIDIA).
+
+** Key Design Decisions
+- *Environment Variables:* Inspired by [[https://github.com/emacs-plus/emacs-plus][emacs-plus ns-build]] for macOS
+- *PATH Injection:* Based on [[https://github.com/d12frosted/homebrew-emacs-plus][homebrew-emacs-plus]] approach, adapted for Linux AppImage compatibility
+- *Smart Dispatcher:* The AppRun script intelligently handles emacs/emacsclient switching based on invocation method
+
 ** How the Build Works
 1. *Bootstrap:* Installs build dependencies (gcc, make, gtk3, webkit2gtk, etc.) via Pacman.
 2. *Compilation:* Compiles Emacs from source with ~--with-native-compilation=aot~ and ~--with-pgtk~.
