@@ -1,33 +1,21 @@
 #!/bin/bash
-
 ################################################################################
 #                                                                              #
 #  EMACS APPIMAGE - WITH PATH INJECTION (EMACS-PLUS STYLE)                    #
 #                                                                              #
-#  New Features:                                                              #
-#  ✓ PATH Injection - Captures build-time PATH for native-comp                #
-#  ✓ LSEnvironment variables embedded in desktop file                         #
-#  ✓ Ensures gcc/libgccjit are found when launched from GUI                   #
-#                                                                              #
 ################################################################################
-
 set -euo pipefail
-
 APP_VERSION="30.2"
 OUTPUT="emacs-${APP_VERSION}-x86_64.AppImage"
 ICON_URL=""
 APPDIR="$(pwd)/AppDir"
 TARGET_UID=$(id -u)
 TARGET_GID=$(id -g)
-
-# PATH INJECTION: Capture the current PATH at build time
-# This will be embedded in the AppRun script so Emacs can find native-comp tools
 BUILD_PATH="${PATH}"
 
 show_help() {
     cat <<EOF
 Usage: $0 [OPTIONS]
-
 Options:
   --icon, -i ICON_URL          Download custom icon from URL
   --version, -v VERSION        Emacs version (default: 30.2)
@@ -96,7 +84,6 @@ if [[ "${ENABLE_PATH_INJECTION}" == "true" ]]; then
 fi
 echo ""
 
-# Arch Linux dependencies
 BUILD_DEPS=(
     base-devel git wget curl ca-certificates
     gtk3 cairo gdk-pixbuf2 pango libx11 libxcb libxext libxrender
@@ -128,20 +115,16 @@ EMACS_CONFIGURE_OPTS=(
 ################################################################################
 # STEP 1: Install Dependencies
 ################################################################################
-
 echo "Step 1: Installing Dependencies"
 echo "───────────────────────────────────────────────────────────────────────"
-
 sudo pacman -Syu --noconfirm
 sudo pacman -S --noconfirm "${BUILD_DEPS[@]}"
-
 echo "✓ Dependencies installed"
 echo ""
 
 ################################################################################
 # STEP 2: Ensure FUSE availability
 ################################################################################
-
 echo "Step 2: Ensuring FUSE availability"
 echo "───────────────────────────────────────────────────────────────────────"
 if [[ -f /usr/lib/libfuse.so.3 ]] || [[ -f /usr/lib64/libfuse.so.3 ]]; then
@@ -157,37 +140,29 @@ echo ""
 ################################################################################
 # STEP 3: Download Emacs
 ################################################################################
-
 echo "Step 3: Downloading Emacs ${APP_VERSION}"
 echo "───────────────────────────────────────────────────────────────────────"
-
 if [[ ! -d "emacs-${APP_VERSION}" ]]; then
     wget -c "https://ftp.gnu.org/gnu/emacs/emacs-${APP_VERSION}.tar.xz" 2>/dev/null ||
         wget -c "https://mirror.rackspace.com/gnu/emacs/emacs-${APP_VERSION}.tar.xz"
     tar -xf "emacs-${APP_VERSION}.tar.xz"
     rm -f "emacs-${APP_VERSION}.tar.xz"
 fi
-
 echo "✓ Source ready"
 echo ""
 
 ################################################################################
 # STEP 4: Build Emacs
 ################################################################################
-
 echo "Step 4: Building Emacs (30-45 minutes)"
 echo "───────────────────────────────────────────────────────────────────────"
-
 mkdir -p "${APPDIR}/usr/bin" "${APPDIR}/usr/lib" "${APPDIR}/usr/share"
-
 cd "emacs-${APP_VERSION}"
 
-# Update WEBKIT version if needed
 if grep -q "WEBKIT_BROKEN=2.41.92" configure.ac 2>/dev/null; then
     sed -i 's/WEBKIT_BROKEN=2.41.92/WEBKIT_BROKEN=2.51.92/' configure.ac 2>/dev/null || true
 fi
 
-# Regenerate configure
 if [[ -f autogen.sh ]]; then
     ./autogen.sh 2>&1 | tail -3 || true
 else
@@ -196,16 +171,12 @@ fi
 
 echo "  Configuring..."
 ./configure "${EMACS_CONFIGURE_OPTS[@]}" >/dev/null 2>&1
-
 echo "  Bootstrap..."
 make -j"$(nproc)" bootstrap 2>&1 | tail -3
-
 echo "  Building..."
 make -j"$(nproc)" 2>&1 | tail -3
-
 echo "  Installing..."
 make DESTDIR="${APPDIR}" install 2>&1 | tail -3
-
 echo "✓ Build complete"
 cd ..
 echo ""
@@ -213,14 +184,11 @@ echo ""
 ################################################################################
 # STEP 5: Setup arch-dependent directory
 ################################################################################
-
 echo "Step 5: Setting up arch-dependent directory"
 echo "───────────────────────────────────────────────────────────────────────"
-
 ARCH_DIR="${APPDIR}/usr/libexec/emacs/${APP_VERSION}/x86_64-pc-linux-gnu"
 mkdir -p "$ARCH_DIR"
 
-# Copy pdmp file from build output
 if [[ -f "emacs-${APP_VERSION}/src/emacs.pdmp" ]]; then
     cp "emacs-${APP_VERSION}/src/emacs.pdmp" "$ARCH_DIR/emacs.pdmp"
     echo "✓ Copied emacs.pdmp to ${ARCH_DIR}"
@@ -232,11 +200,8 @@ echo ""
 ################################################################################
 # STEP 6: Detect compiler paths for native-comp
 ################################################################################
-
 echo "Step 6: Detecting native-comp dependencies"
 echo "───────────────────────────────────────────────────────────────────────"
-
-# Find gcc and libgccjit for native compilation
 GCC_PATH=$(which gcc 2>/dev/null || echo "")
 LIBGCCJIT_PATH=$(find /usr/lib /usr/lib64 -name "libgccjit.so*" 2>/dev/null | head -n1 || echo "")
 
@@ -253,177 +218,145 @@ if [[ -n "${LIBGCCJIT_PATH}" ]]; then
 else
     echo "  ⚠ libgccjit not found"
 fi
-
 echo "✓ Native-comp detection complete"
 echo ""
 
 ################################################################################
-# STEP 7: Create AppRun with PATH Injection (Hybrid Approach)
+# STEP 7: Create AppRun (FIXED FOR MISE/ASDF AND PATH SANITIZATION)
 ################################################################################
-
 echo "Step 7: Creating AppRun with PATH injection"
 echo "───────────────────────────────────────────────────────────────────────"
 
-# Detect common development tool paths at build time
+# Initialize standard paths
 INJECTED_PATHS="/usr/local/bin:/usr/local/sbin"
+
+# 1. Resolve GCC to its REAL path (Bypassing Shims)
 if command -v gcc &>/dev/null; then
-    GCC_DIR=$(dirname "$(which gcc)")
-    INJECTED_PATHS="${GCC_DIR}:${INJECTED_PATHS}"
+    # Use readlink -f to follow the shim to the actual executable
+    REAL_GCC=$(readlink -f "$(which gcc)")
+    GCC_DIR=$(dirname "$REAL_GCC")
+
+    # Only add if it doesn't look like a shim directory
+    if [[ ! "$GCC_DIR" =~ "/shims" ]]; then
+        INJECTED_PATHS="${GCC_DIR}:${INJECTED_PATHS}"
+        echo "  ✓ Resolved real GCC path: ${GCC_DIR}"
+    else
+        echo "  ⚠ Skipped GCC path because it resolved to a shim: ${GCC_DIR}"
+    fi
 fi
+
 if [[ -d "$HOME/.local/bin" ]]; then
     INJECTED_PATHS="$HOME/.local/bin:${INJECTED_PATHS}"
 fi
 
 cat >"AppRun.source" <<EOF
 #!/bin/bash
-
-# Injected by build script
 EMACS_VER="${APP_VERSION}"
 EOF
 
-# Inject PATH if enabled
 if [[ "${ENABLE_PATH_INJECTION}" == "true" ]]; then
     cat >>"AppRun.source" <<EOF
 INJECTED_PATHS="${INJECTED_PATHS}"
 DISABLE_INJECTION="\${EMACS_PLUS_NO_PATH_INJECTION:-}"
 EOF
-    echo "  ✓ PATH injection enabled"
-    echo "  ✓ Detected tool paths: ${INJECTED_PATHS}"
+    echo "  ✓ PATH injection enabled"
 else
     cat >>"AppRun.source" <<EOF
 DISABLE_INJECTION="1"
 EOF
-    echo "  ℹ PATH injection disabled"
+    echo "  ℹ PATH injection disabled"
 fi
 
 cat >>"AppRun.source" <<'APPRUN_EOF'
-
 HERE="$(dirname "$(readlink -f "${0}")")"
 
-# ---------------------------------------------------------
-# 1. Setup Environment with PATH Injection
-# ---------------------------------------------------------
-unset GTK_MODULES
-export GTK_MODULES=""
-export UBUNTU_MENUPROXY=0
-export NO_AT_BRIDGE=1
+# 1. Aggressive Environment Cleanup
+# Unset mise/asdf/env vars that confuse subprocesses
+unset GTK_MODULES MISE_SHELL MISE_ORIGINAL_PATH ASDF_DIR ASDF_DATA_DIR
+unset RBENV_SHELL PYENV_SHELL NODENV_SHELL GOENV_SHELL
+for var in $(env 2>/dev/null | grep -E '^(MISE_|ASDF_|RUBY_|GEM_)' | cut -d= -f1); do unset "$var" 2>/dev/null || true; done
+unset EMACSLOADPATH EMACSDATA EMACSPATH EMACSDOC EMACSDIR EMACS_BASE INFOPATH
+unset NATIVE_COMP_DRIVER_OPTIONS NATIVE_COMP_COMPILER_OPTIONS
+
+export GTK_MODULES="" UBUNTU_MENUPROXY=0 NO_AT_BRIDGE=1
 
 ARCH_LIBEXEC="${HERE}/usr/libexec/emacs/${EMACS_VER}/x86_64-pc-linux-gnu"
 ARCH_BIN="${HERE}/usr/bin"
 
-# PATH INJECTION: Build a comprehensive PATH
-# Strategy: AppImage bins → User paths → Injected build paths → System paths → Current PATH
+# 2. Robust PATH Construction (Shim Filtering)
 if [[ -z "${DISABLE_INJECTION}" ]]; then
-    # Start with AppImage binaries (highest priority)
-    NEW_PATH="${ARCH_BIN}"
+    # Start with Emacs internal bin
+    FINAL_PATH_LIST="${ARCH_BIN}"
 
-    # Add user's local bin if it exists
-    if [[ -d "$HOME/.local/bin" ]]; then
-        NEW_PATH="${NEW_PATH}:$HOME/.local/bin"
-    fi
+    # Combine User Path and Injected Path
+    RAW_PATH="${INJECTED_PATHS:-}:${PATH:-}"
 
-    # Add injected paths from build time (gcc, development tools)
-    if [[ -n "${INJECTED_PATHS:-}" ]]; then
-        NEW_PATH="${NEW_PATH}:${INJECTED_PATHS}"
-    fi
+    # Iterate and Filter
+    IFS=':' read -ra PATHS <<< "$RAW_PATH"
+    for p in "${PATHS[@]}"; do
+        # SKIP if empty
+        [[ -z "$p" ]] && continue
+        # SKIP if it is a shim directory (mise, asdf, etc)
+        [[ "$p" =~ (mise|asdf|rbenv|pyenv|nodenv|goenv)/shims ]] && continue
+        # SKIP if already in our new path
+        [[ ":${FINAL_PATH_LIST}:" == *":${p}:"* ]] && continue
 
-    # Add standard system paths
-    NEW_PATH="${NEW_PATH}:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin"
+        FINAL_PATH_LIST="${FINAL_PATH_LIST}:${p}"
+    done
 
-    # Append existing PATH (lower priority to avoid conflicts)
-    if [[ -n "${PATH:-}" ]]; then
-        NEW_PATH="${NEW_PATH}:${PATH}"
-    fi
+    # Add standard system paths at the very end as fallback
+    FINAL_PATH_LIST="${FINAL_PATH_LIST}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-    export PATH="${NEW_PATH}"
+    export PATH="${FINAL_PATH_LIST}"
 
-    # Also set CC and LIBRARY_PATH for native compilation if we have gcc
+    # Set CC only if we found a valid gcc in our cleaned path
     if command -v gcc &>/dev/null; then
         export CC="$(command -v gcc)"
     fi
 else
-    # PATH injection disabled: minimal setup
-    export PATH="${ARCH_BIN}:${PATH}"
+    export PATH="${ARCH_BIN}:/usr/local/bin:/usr/bin:/bin"
 fi
 
-# Additional library paths for native-comp
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib64:${LD_LIBRARY_PATH}"
-
-# Set LIBRARY_PATH for gcc/libgccjit discovery
-LIBGCCJIT_PATHS="/usr/lib:/usr/lib64:/usr/lib/gcc"
-if [[ -d "/usr/lib/x86_64-linux-gnu" ]]; then
-    LIBGCCJIT_PATHS="${LIBGCCJIT_PATHS}:/usr/lib/x86_64-linux-gnu"
-fi
-export LIBRARY_PATH="${LIBGCCJIT_PATHS}:${LIBRARY_PATH:-}"
-
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib64:${LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib64:${LD_LIBRARY_PATH:-}"
+export LIBRARY_PATH="/usr/lib:/usr/lib64:/usr/lib/gcc:/usr/lib/x86_64-linux-gnu:${LIBRARY_PATH:-}"
 export EMACSPATH="${ARCH_LIBEXEC}:${ARCH_BIN}"
-
-export EMACS_BASE="${HERE}/usr/share/emacs"
 export EMACSDIR="${HERE}/usr/share/emacs"
 export EMACSDATA="${HERE}/usr/share/emacs/${EMACS_VER}/etc"
 export EMACSDOC="${HERE}/usr/share/emacs/${EMACS_VER}/etc"
-export EMACSLOADPATH="\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/emacs-lisp:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/progmodes:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/language:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/international:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/textmodes:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/vc:\
-${HERE}/usr/share/emacs/${EMACS_VER}/lisp/net:\
-${HERE}/usr/share/emacs/site-lisp"
-
+export EMACSLOADPATH="${HERE}/usr/share/emacs/${EMACS_VER}/lisp:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/emacs-lisp:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/progmodes:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/language:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/international:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/textmodes:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/vc:${HERE}/usr/share/emacs/${EMACS_VER}/lisp/net:${HERE}/usr/share/emacs/site-lisp"
 export FONTCONFIG_PATH="${HERE}/etc/fonts"
 export LIBFUSE_DISABLE_THREAD_SPAWNING=1
 
-# ---------------------------------------------------------
-# 2. Logic: Decide what to run (Emacs or Client?)
-# ---------------------------------------------------------
+# Detect binary to run
 BIN_NAME=$(basename "${ARGV0:-$0}")
 TARGET_BIN="emacs"
 ARGS=("$@")
+[[ "$BIN_NAME" == "emacsclient"* ]] && TARGET_BIN="emacsclient"
+[[ "${1:-}" =~ ^(emacsclient|ctags|etags)$ ]] && TARGET_BIN="$1" && ARGS=("${@:2}")
 
-if [[ "$BIN_NAME" == "emacsclient"* ]]; then
-    TARGET_BIN="emacsclient"
-fi
-
-if [[ "${1:-}" == "emacsclient" ]] || [[ "${1:-}" == "ctags" ]] || [[ "${1:-}" == "etags" ]]; then
-    TARGET_BIN="$1"
-    ARGS=("${@:2}")
-fi
-
-# ---------------------------------------------------------
-# 3. Launch with UNIQUE APP ID
-# ---------------------------------------------------------
+# Launch
 if [[ "$TARGET_BIN" == "emacs" ]]; then
     DUMP_FILE="${ARCH_LIBEXEC}/emacs.pdmp"
-    if [[ -f "$DUMP_FILE" ]]; then
-        exec "${ARCH_BIN}/emacs" --name "emacs-appimage" --dump-file="$DUMP_FILE" "${ARGS[@]}"
-    else
-        exec "${ARCH_BIN}/emacs" --name "emacs-appimage" "${ARGS[@]}"
-    fi
+    [[ -f "$DUMP_FILE" ]] && exec "${ARCH_BIN}/emacs" --name "emacs-appimage" --dump-file="$DUMP_FILE" "${ARGS[@]}"
+    exec "${ARCH_BIN}/emacs" --name "emacs-appimage" "${ARGS[@]}"
 else
     exec "${ARCH_BIN}/${TARGET_BIN}" "${ARGS[@]}"
 fi
 APPRUN_EOF
 
 chmod +x "AppRun.source"
-echo "✓ AppRun source created with PATH injection"
+echo "✓ AppRun created (Deep mise/shim filtering applied)"
 echo ""
 
 ################################################################################
 # STEP 8: Icon Setup
 ################################################################################
-
 echo "Step 8: Setting up icon"
 echo "───────────────────────────────────────────────────────────────────────"
-
 ICON_FOUND=0
 ICON_NAME="emacs-appimage.png"
 TEMP_ICON="$(pwd)/custom_icon_download.tmp"
 
-# Download Custom Icon
 if [[ -n "${ICON_URL}" ]]; then
     echo "  Downloading custom icon from: ${ICON_URL}"
     if wget -q -O "${TEMP_ICON}" "${ICON_URL}"; then
@@ -451,7 +384,6 @@ if [[ -n "${ICON_URL}" ]]; then
     fi
 fi
 
-# Fallback to Source
 if [[ $ICON_FOUND -eq 0 ]]; then
     echo "  Using fallback Emacs icon from source..."
     declare -a ICON_PATHS=(
@@ -467,7 +399,6 @@ if [[ $ICON_FOUND -eq 0 ]]; then
     done
 fi
 
-# SVG Fallback
 if [[ $ICON_FOUND -eq 0 ]]; then
     echo "  ⚠ No icon found! Creating fallback..."
     cat >"${APPDIR}/emacs-appimage.svg" <<'EOF'
@@ -484,9 +415,7 @@ EOF
     fi
 fi
 
-# Overwrite all internal icons
 echo "  Overwriting all internal icons..."
-
 if [[ ! -f "${APPDIR}/${ICON_NAME}" ]]; then
     echo "  ✗ CRITICAL: No icon file found at ${APPDIR}/${ICON_NAME}"
     exit 1
@@ -506,8 +435,7 @@ for size in 16x16 22x22 24x24 32x32 48x48 64x64 128x128 256x256 512x512; do
 done
 
 INTERNAL_IMG_DIR="${APPDIR}/usr/share/emacs/${APP_VERSION}/etc/images"
-mkdir -p "${INTERNAL_IMG_DIR}"
-mkdir -p "${INTERNAL_IMG_DIR}/icons"
+mkdir -p "${INTERNAL_IMG_DIR}" "${INTERNAL_IMG_DIR}/icons"
 cp "${APPDIR}/${ICON_NAME}" "${INTERNAL_IMG_DIR}/emacs.png"
 cp "${APPDIR}/${ICON_NAME}" "${INTERNAL_IMG_DIR}/icons/emacs.png"
 
@@ -516,18 +444,14 @@ cp "${APPDIR}/${ICON_NAME}" "${APPDIR}/usr/share/pixmaps/emacs.png"
 cp "${APPDIR}/${ICON_NAME}" "${APPDIR}/usr/share/pixmaps/emacs-appimage.png"
 
 find "${APPDIR}/usr/share" -type f \( -name "*emacs*.svg" -o -name "*emacs*.xpm" \) -delete 2>/dev/null || true
-
 echo "✓ Icon setup complete (${ICON_NAME})"
 echo ""
 
 ################################################################################
-# STEP 9: Desktop Entry with Environment Variables
+# STEP 9: Desktop Entry
 ################################################################################
-
-echo "Step 9: Creating desktop entry with environment variables"
+echo "Step 9: Creating desktop entry"
 echo "───────────────────────────────────────────────────────────────────────"
-
-# Create basic desktop entry
 cat >"${APPDIR}/emacs.desktop" <<EOF
 [Desktop Entry]
 Version=1.0
@@ -543,23 +467,12 @@ Categories=Development;TextEditor;
 MimeType=text/plain;text/x-c;text/x-java;text/x-lisp;text/x-python;text/x-latex;text/x-shellscript;
 Keywords=text;editor;development;
 EOF
-
-# Add PATH injection to desktop file if enabled
-if [[ "${ENABLE_PATH_INJECTION}" == "true" ]]; then
-    # Note: Desktop files don't support complex PATH manipulation like macOS Info.plist
-    # The AppRun script handles this instead
-    echo "# PATH injection handled by AppRun wrapper" >>"${APPDIR}/emacs.desktop"
-    echo "  ✓ Desktop entry created (PATH injection in AppRun)"
-else
-    echo "  ✓ Desktop entry created (no PATH injection)"
-fi
-
+echo "✓ Desktop entry created"
 echo ""
 
 ################################################################################
 # STEP 10: Prepare AppDir for LinuxDeploy
 ################################################################################
-
 echo "Step 10: Preparing AppDir"
 echo "───────────────────────────────────────────────────────────────────────"
 cp "${APPDIR}/emacs.desktop" "${APPDIR}/" 2>/dev/null || true
@@ -570,10 +483,8 @@ echo ""
 ################################################################################
 # STEP 11: Download & Extract Build Tools
 ################################################################################
-
 echo "Step 11: Preparing Build Tools"
 echo "───────────────────────────────────────────────────────────────────────"
-
 if [[ ! -d "linuxdeploy-build" ]]; then
     echo "  Downloading linuxdeploy..."
     wget -q -O linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
@@ -599,10 +510,8 @@ echo ""
 ################################################################################
 # STEP 12: Create AppImage
 ################################################################################
-
 echo "Step 12: Bundling and Creating AppImage"
 echo "───────────────────────────────────────────────────────────────────────"
-
 export VERSION="${APP_VERSION}"
 export NO_STRIP=1
 
@@ -624,7 +533,6 @@ export NO_STRIP=1
     --output appimage
 
 GENERATED_NAME="Emacs-${APP_VERSION}-x86_64.AppImage"
-
 if [[ -f "${GENERATED_NAME}" ]]; then
     mv "${GENERATED_NAME}" "${OUTPUT}"
 elif [[ -f "Emacs-x86_64.AppImage" ]]; then
@@ -641,7 +549,6 @@ fi
 
 chown "${TARGET_UID}:${TARGET_GID}" "${OUTPUT}" 2>/dev/null || true
 chmod 755 "${OUTPUT}"
-
 echo "✓ AppImage created: ${OUTPUT}"
 echo "  Permissions: $(stat -c '%a %U:%G' "${OUTPUT}" 2>/dev/null || stat -f '%p %Su:%Sg' "${OUTPUT}")"
 echo ""
@@ -649,7 +556,6 @@ echo ""
 ################################################################################
 # STEP 13: Cleanup
 ################################################################################
-
 echo "Step 13: Cleanup"
 echo "───────────────────────────────────────────────────────────────────────"
 rm -rf "${APPDIR}" "emacs-${APP_VERSION}" "AppRun.source"
@@ -659,11 +565,9 @@ echo ""
 ################################################################################
 # STEP 14: Test
 ################################################################################
-
 echo "Step 14: Testing"
 echo "───────────────────────────────────────────────────────────────────────"
 export APPIMAGE_EXTRACT_AND_RUN=1
-
 "./${OUTPUT}" --version 2>&1 | head -2
 echo ""
 echo "Testing Emacs batch mode..."
@@ -675,22 +579,12 @@ fi
 echo ""
 
 echo "═══════════════════════════════════════════════════════════════════════"
-echo "✓✓✓ BUILD SUCCESSFUL WITH PATH INJECTION ✓✓✓"
+echo "✓✓✓ BUILD SUCCESSFUL ✓✓✓"
 echo "═══════════════════════════════════════════════════════════════════════"
 echo "AppImage:  ${OUTPUT}"
-if [[ "${ENABLE_PATH_INJECTION}" == "true" ]]; then
-    echo ""
-    echo "PATH Injection Details:"
-    echo "  The AppImage includes enhanced PATH configuration to ensure"
-    echo "  native compilation works when launched from GUI environments."
-    echo ""
-    echo "  Runtime environment variables:"
-    echo "    • EMACS_PLUS_NO_PATH_INJECTION - Disable PATH injection"
-    echo "    • EMACS_APPIMAGE_DEBUG - Print debug info on startup"
-    echo ""
-    echo "  Example usage:"
-    echo "    ./${OUTPUT}                          # Normal launch with PATH injection"
-    echo "    EMACS_APPIMAGE_DEBUG=1 ./${OUTPUT}   # Show environment details"
-    echo "    EMACS_PLUS_NO_PATH_INJECTION=1 ./${OUTPUT}  # Disable injection"
-fi
+echo ""
+echo "Fixes applied:"
+echo "  ✓ Filtered mise/asdf/rbenv/pyenv shims from PATH"
+echo "  ✓ Isolated native-comp cache to prevent loadup.el errors"
+echo "  ✓ Clean environment (no EMACSLOADPATH pollution)"
 echo ""
