@@ -13,7 +13,6 @@ This build system has been tested and verified on Arch Linux with various deskto
 ** Inspiration & Design Philosophy
 The environment variable handling and PATH injection approach is inspired by:
 - [[https://github.com/d12frosted/homebrew-emacs-plus][homebrew-emacs-plus]] for macOS PATH injection
-- [[https://github.com/emacs-plus/emacs-plus][emacs-plus ns-build]] for environment variable management
 
 These approaches have been adapted for Linux AppImage compatibility with a focus on:
 - *Respecting user environment:* Preserves system PATH and shell configurations (zsh, mise, asdf)
@@ -22,7 +21,7 @@ These approaches have been adapted for Linux AppImage compatibility with a focus
 
 ** Key Features
 - *Version:* Builds Emacs 30.2 (configurable)
-- *Performance:* Compiled with =-O3 -march=native=, Native Compilation (AOT), and pure GTK3 (PGTK)
+- *Performance:* Compiled with =-O2 -march=native=, Native Compilation (AOT), and pure GTK3 (PGTK)
 - *Modern Features:* Includes Tree-sitter, JSON, SVG, and **Xwidgets with WebKitGTK** for embedded web browsing
 - *Native Look & Feel:* Uses the host system's GTK theme and fonts (fixes common AppImage UI ugliness)
 - *Smart Dispatcher:* Acts as =emacs= or =emacsclient= depending on how it is invoked
@@ -293,6 +292,325 @@ Both desktop entries include:
 - Keyboard shortcut support
 - Multiple actions (new window, new instance, terminal client)
 - WebKit rendering optimizations (WEBKIT_DISABLE_DMABUF_RENDERER=1 for GPU-accelerated rendering)
+
+
+** Common Issues and Solutions
+
+*** GLIBC Version Errors
+
+**** Symptoms
+When running the AppImage, you see errors similar to:
+#+BEGIN_EXAMPLE
+/tmp/.mount_emacs-Objgah/usr/bin/emacs: /lib/x86_64-linux-gnu/libc.so.6:
+version `GLIBC_2.36' not found (required by /tmp/.mount_emacs-Objgah/usr/lib/libudev.so.1)
+
+/tmp/.mount_emacs-Objgah/usr/bin/emacs: /lib/x86_64-linux-gnu/libc.so.6:
+version `GLIBC_2.38' not found (required by /tmp/.mount_emacs-Objgah/usr/lib/libudev.so.1)
+#+END_EXAMPLE
+
+**** Root Cause
+This occurs when the AppImage is built on a newer system (e.g., Arch Linux with GLIBC 2.39) and run on an older system (e.g., Ubuntu 22.04 with GLIBC 2.35). LinuxDeploy bundles system libraries like ~libudev.so.1~ that require a newer GLIBC than what is available on the target system.
+
+**** Solution
+Exclude system-specific libraries from being bundled. Modify *STEP 12* in the build script to add these exclusions:
+
+#+BEGIN_SRC bash
+"$(pwd)/linuxdeploy-build/AppRun" \
+    --appdir "${APPDIR}" \
+    --executable "${APPDIR}/usr/bin/emacs" \
+    --desktop-file "${APPDIR}/emacs.desktop" \
+    --icon-file "${APPDIR}/${ICON_NAME}" \
+    --custom-apprun "AppRun.source" \
+    --exclude-library libgtk-3.so.0 \
+    --exclude-library libgdk-3.so.0 \
+    --exclude-library libglib-2.0.so.0 \
+    --exclude-library libgio-2.0.so.0 \
+    --exclude-library libgobject-2.0.so.0 \
+    --exclude-library libpango-1.0.so.0 \
+    --exclude-library libpangocairo-1.0.so.0 \
+    --exclude-library libcairo.so.2 \
+    --exclude-library libcairo-gobject.so.2 \
+    --exclude-library libudev.so.1 \
+    --exclude-library libc.so.6 \
+    --exclude-library libdbus-1.so.3 \
+    --exclude-library libsystemd.so.0 \
+    --output appimage
+#+END_SRC
+
+*Why this works:* These libraries are tightly coupled to the host system and should always use the versions from the system where the AppImage is running, not from the build system.
+
+**** Alternative (Maximum Compatibility)
+Build the AppImage on an older distribution (like Ubuntu 22.04 LTS or Debian 12). AppImages built on older systems will run on newer systems, but the reverse is not true.
+
+*** Mise/ASDF/Version Manager Errors
+
+**** Symptoms
+#+BEGIN_EXAMPLE
+error in process sentinel: magit-todos--async-when-done: Process "magit-todos--scan-with-git-diff"
+failed with exit code 128. Output: "fatal: failed to stat 'mise ERROR emacs.appimage is not a
+valid shim...': File name too long"
+#+END_EXAMPLE
+
+**** Root Cause
+Version managers (mise, asdf, rbenv, pyenv) add "shim" directories to your PATH that intercept commands. When Emacs spawns subprocesses like git, the shim runs instead of the real binary, causing errors.
+
+**** Solution
+Add environment filtering to the ~AppRun~ script. In *STEP 7* of the build script, modify ~AppRun.source~ to include:
+
+#+BEGIN_SRC bash
+cat >"AppRun.source" <<'EOF'
+#!/bin/bash
+HERE="$(dirname "$(readlink -f "${0}")")"
+EMACS_VER="30.2"
+
+# Clean environment variables that can cause conflicts
+unset MISE_SHELL MISE_ORIGINAL_PATH ASDF_DIR ASDF_DATA_DIR
+unset RBENV_SHELL PYENV_SHELL NODENV_SHELL GOENV_SHELL
+for var in $(env 2>/dev/null | grep -E '^(MISE_|ASDF_)' | cut -d= -f1); do
+    unset "$var" 2>/dev/null || true
+done
+
+# ... rest of AppRun script ...
+
+# Filter shims from PATH when building PATH variable
+if [[ -n "${PATH:-}" ]]; then
+    NEW_PATH="${ARCH_BIN}"
+    IFS=':' read -ra PATHS <<< "$PATH"
+    for p in "${PATHS[@]}"; do
+        # Skip version manager shims
+        [[ "$p" =~ (mise|asdf|rbenv|pyenv|nodenv|goenv)/shims ]] && continue
+        NEW_PATH="${NEW_PATH}:${p}"
+    done
+    export PATH="${NEW_PATH}"
+else
+    export PATH="${ARCH_BIN}:/usr/local/bin:/usr/bin:/bin"
+fi
+EOF
+#+END_SRC
+
+**** Quick Workaround (No Rebuild)
+Launch Emacs without version manager variables:
+#+BEGIN_SRC bash
+env -u MISE_SHELL -u MISE_ORIGINAL_PATH ~/AppImages/emacs-30.2-x86_64.AppImage
+#+END_SRC
+
+*** Native Compilation "loadup.el" Errors
+
+**** Symptoms
+#+BEGIN_EXAMPLE
+error in process sentinel: Wrong type argument: stringp, (setq current-load-list (list "loadup.el"))
+error in process sentinel: if: Wrong type argument: stringp, (setq current-load-list (list "loadup.el"))
+#+END_EXAMPLE
+
+**** Root Cause
+Conflicting ~EMACSLOADPATH~ or other Emacs environment variables from a system Emacs installation or shell config pollute the AppImage environment.
+
+**** Solutions
+***** 1. Clean your shell configuration
+Check for problematic variables:
+#+BEGIN_SRC bash
+grep -n "EMACS\|NATIVE_COMP" ~/.bashrc ~/.zshrc ~/.config/fish/config.fish 2>/dev/null
+#+END_SRC
+
+If found, wrap them to only apply to system Emacs:
+#+BEGIN_SRC bash
+# In ~/.bashrc or ~/.zshrc
+if [[ ! "$0" =~ "AppImage" ]]; then
+    export EMACSLOADPATH="/my/custom/path"
+fi
+#+END_SRC
+
+***** 2. Clear native-comp cache
+#+BEGIN_SRC bash
+rm -rf ~/.emacs.d/eln-cache
+#+END_SRC
+
+***** 3. Add environment cleanup to AppRun
+In *STEP 7* of the build script, add this after the ~HERE~ definition:
+#+BEGIN_SRC bash
+# Clean Emacs-specific variables that can cause corruption
+unset EMACSLOADPATH EMACSDATA EMACSPATH EMACSDOC EMACSDIR EMACS_BASE INFOPATH
+unset NATIVE_COMP_DRIVER_OPTIONS NATIVE_COMP_COMPILER_OPTIONS
+#+END_SRC
+
+***** 4. Launch with clean environment (Nuclear Option)
+#+BEGIN_SRC bash
+env -i \
+  HOME=$HOME \
+  DISPLAY=$DISPLAY \
+  USER=$USER \
+  LOGNAME=$LOGNAME \
+  PATH=/usr/local/bin:/usr/bin:/bin \
+  TERM=$TERM \
+  ~/AppImages/emacs-30.2-x86_64.AppImage
+#+END_SRC
+
+*** Icon Not Showing in Application Menu
+
+**** Symptoms
+The Emacs icon doesn't appear in your application launcher or desktop environment.
+
+**** Solution
+Update the icon cache after installing the desktop entry:
+#+BEGIN_SRC bash
+# After running the GearLever integration script
+gtk-update-icon-cache -f -t ~/.local/share/icons/hicolor/
+update-desktop-database ~/.local/share/applications/
+#+END_SRC
+/Alternatively, log out and log back in./
+
+*** AppImage Won't Launch (No Error Message)
+
+**** Symptoms
+Double-clicking the AppImage does nothing, or it briefly shows activity then disappears.
+
+**** Diagnostics
+#+BEGIN_SRC bash
+# Run from terminal to see error messages
+./emacs-30.2-x86_64.AppImage
+
+# Check if FUSE is available
+fusermount --version
+
+# Try extraction mode (doesn't require FUSE)
+./emacs-30.2-x86_64.AppImage --appimage-extract-and-run
+#+END_SRC
+
+**** Solutions
+1. *Install FUSE if missing:*
+   #+BEGIN_SRC bash
+   # Debian/Ubuntu
+   sudo apt install fuse libfuse2
+
+   # Arch Linux
+   sudo pacman -S fuse2 fuse3
+
+   # Fedora
+   sudo dnf install fuse fuse-libs
+   #+END_SRC
+
+2. *Make executable:*
+   #+BEGIN_SRC bash
+   chmod +x emacs-30.2-x86_64.AppImage
+   #+END_SRC
+
+3. *Use extraction mode permanently:*
+   #+BEGIN_SRC bash
+   export APPIMAGE_EXTRACT_AND_RUN=1
+   ./emacs-30.2-x86_64.AppImage
+   #+END_SRC
+
+*** Emacs Client Doesn't Connect to Daemon
+
+**** Symptoms
+The Emacs Client desktop entry or command doesn't connect to a running daemon.
+
+**** Solution
+1. Start the daemon first:
+   #+BEGIN_SRC bash
+   ~/AppImages/emacs-30.2-x86_64.AppImage --daemon
+   #+END_SRC
+
+2. Verify daemon is running:
+   #+BEGIN_SRC bash
+   ps aux | grep "emacs.*daemon"
+   #+END_SRC
+
+3. Connect using the AppImage:
+   #+BEGIN_SRC bash
+   # Method 1: Direct argument
+   ~/AppImages/emacs-30.2-x86_64.AppImage emacsclient -c -a ""
+
+   # Method 2: Symlink
+   ln -s ~/AppImages/emacs-30.2-x86_64.AppImage ~/bin/emacsclient
+   ~/bin/emacsclient -c -a ""
+   #+END_SRC
+
+4. Check socket location:
+   #+BEGIN_SRC bash
+   ls -la /tmp/emacs$(id -u)/
+   # Or
+   ls -la $XDG_RUNTIME_DIR/emacs/
+   #+END_SRC
+
+*** Native Compilation Not Working
+
+**** Symptoms
+Packages aren't being natively compiled, or you see warnings about native compilation being unavailable.
+
+**** Diagnostics
+Evaluate these inside Emacs:
+1. ~M-x eval-expression RET (native-comp-available-p) RET~ (Should return ~t~)
+2. ~M-x eval-expression RET (executable-find "gcc") RET~ (Should return path to gcc)
+3. ~M-: (locate-library "libgccjit")~
+
+**** Solutions
+1. *Install GCC and libgccjit on your system:*
+   #+BEGIN_SRC bash
+   # Debian/Ubuntu
+   sudo apt install gcc libgccjit-12-dev
+
+   # Arch Linux
+   sudo pacman -S gcc libgccjit
+
+   # Fedora
+   sudo dnf install gcc libgccjit-devel
+   #+END_SRC
+
+2. *Verify PATH includes compiler:*
+   Inside Emacs: ~M-x shell~ then ~which gcc~.
+
+3. *Check eln-cache permissions:*
+   #+BEGIN_SRC bash
+   ls -ld ~/.emacs.d/eln-cache
+   # Must be writable by your user. Fix if needed:
+   chmod -R u+w ~/.emacs.d/eln-cache
+   #+END_SRC
+
+*** WebKit/XWidgets Crashes
+
+**** Symptoms
+Emacs crashes when using ~xwidget-webkit-browse-url~ or other WebKit features.
+
+**** Solution
+The build script sets ~WEBKIT_DISABLE_DMABUF_RENDERER=1~ automatically. To set manually:
+
+#+BEGIN_SRC bash
+# Launch with workaround
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ~/AppImages/emacs-30.2-x86_64.AppImage
+
+# Or add to shell config
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
+#+END_SRC
+
+*If it still crashes*, ensure system libraries are present:
+#+BEGIN_SRC bash
+# Debian/Ubuntu
+sudo apt install libwebkit2gtk-4.1-0
+
+# Arch Linux
+sudo pacman -S webkit2gtk-4.1
+#+END_SRC
+
+* Diagnostic Commands
+
+Use these to gather info if issues persist.
+
+#+BEGIN_SRC bash
+# Check GLIBC version on your system
+ldd --version
+
+# Check what libraries the AppImage needs
+./emacs-30.2-x86_64.AppImage --appimage-extract
+ldd squashfs-root/usr/bin/emacs | grep "not found"
+
+# Extract and examine AppRun
+./emacs-30.2-x86_64.AppImage --appimage-extract
+cat squashfs-root/AppRun
+
+# Check for conflicting environment variables
+env | grep -E '^(EMACS|MISE|ASDF|NATIVE_COMP)' | sort
+#+END_SRC
 
 * Credits & Inspiration
 
